@@ -6,11 +6,15 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const fs = require("fs");
-const { getPool } = require("../db/pool");
+const { getPool, endPool, isDatabaseUrlConfigured } = require("../db/pool");
 
 const FILES = ["004_email_otp_challenges.sql", "005_auth_otp_codes.sql", "006_pending_registrations.sql"];
 
 async function main() {
+  if (!isDatabaseUrlConfigured()) {
+    console.error("DATABASE_URL is required (same as the running app). PGHOST/PGPORT are not used.");
+    process.exit(1);
+  }
   const pool = getPool();
   for (const name of FILES) {
     const filePath = path.join(__dirname, "..", "db", "migrations", name);
@@ -23,7 +27,7 @@ async function main() {
     await pool.query(sql);
     console.log("OK:", name);
   }
-  await pool.end();
+  await endPool();
   console.log("All OTP migrations applied.");
 }
 

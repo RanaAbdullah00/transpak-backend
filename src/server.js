@@ -54,6 +54,8 @@ const allowPortFallback =
 const DB_RETRY_BASE_MS = Number(process.env.DB_RETRY_BASE_MS || 5000);
 const DB_RETRY_MAX_QUICK = Number(process.env.DB_RETRY_MAX_QUICK || 8);
 const DB_RETRY_SLOW_MS = Number(process.env.DB_RETRY_SLOW_MS || 120000);
+/** After wrong password / Supabase ECIRCUITBREAKER — long wait so we do not extend the lockout (Render unchanged: optional env). */
+const DB_RETRY_CIRCUIT_MS = Number(process.env.DB_RETRY_CIRCUIT_MS || 300000);
 const MAX_PORT_FALLBACK_ATTEMPTS = 25;
 
 function ensureUploadsDir() {
@@ -134,6 +136,24 @@ function formatDbError(err) {
   return { code, msg };
 }
 
+function isSupabaseCircuitBreaker(err) {
+  const m = String(err?.message || "").toLowerCase();
+  return m.includes("ecircuitbreaker") || m.includes("too many authentication");
+}
+
+function isPasswordAuthFailure(err) {
+  const c = String(err?.code || "");
+  if (c === "28P01") return true;
+  const m = String(err?.message || "").toLowerCase();
+  return m.includes("password authentication failed");
+}
+
+function isDnsNotFound(err) {
+  const c = String(err?.code || "");
+  if (c === "ENOTFOUND") return true;
+  return String(err?.message || "").includes("ENOTFOUND");
+}
+
 async function start() {
   const dbState = { ready: false, error: null };
   let quickAttempts = 0;
@@ -144,7 +164,6 @@ async function start() {
       dbState.ready = true;
       dbState.error = null;
       quickAttempts = 0;
-      console.log("[db] connected");
       await seedAdminIfNeeded();
       await ensureTranspakDemoAdmin();
     } catch (err) {
@@ -153,10 +172,31 @@ async function start() {
       const { code, msg } = formatDbError(err);
       const isProd = process.env.NODE_ENV === "production";
       const safeDetail = isProd ? `${code}` : `${code}: ${msg}`;
+
+      if (isSupabaseCircuitBreaker(err) || isPasswordAuthFailure(err)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[db] Supabase blocked or rejected login (wrong DATABASE_URL password, or pooler user must be postgres.<project-ref>).",
+          "Dashboard → Database → Connect → copy Session pooler URI. If blocked, wait a few minutes or reset DB password; do not rapid-retry."
+        );
+        quickAttempts = 0;
+        // eslint-disable-next-line no-console
+        console.error(`[db] backing off ${DB_RETRY_CIRCUIT_MS}ms before next attempt (${safeDetail})`);
+        setTimeout(connectWithRetry, DB_RETRY_CIRCUIT_MS);
+        return;
+      }
+
+      if (isDnsNotFound(err)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[db] DNS ENOTFOUND: host not resolved. On IPv4 networks use Supabase Session pooler (*.pooler.supabase.com), not direct db.*.supabase.co, unless you use the IPv4 add-on."
+        );
+      }
+
       quickAttempts += 1;
       if (quickAttempts <= DB_RETRY_MAX_QUICK) {
         const backoff = Math.min(DB_RETRY_BASE_MS * 2 ** Math.min(quickAttempts - 1, 5), 60000);
-        console.error(`[db] connection failed (quick retry ${quickAttempts}/${DB_RETRY_MAX_QUICK}) ${safeDetail}; next in ${backoff}ms`);
+        console.error(`[db] retry ${quickAttempts}/${DB_RETRY_MAX_QUICK} after failure (${safeDetail}); next in ${backoff}ms`);
         setTimeout(connectWithRetry, backoff);
         return;
       }
