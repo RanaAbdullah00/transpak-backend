@@ -4,7 +4,7 @@ const { signToken } = require("../utils/jwt");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { authData, authDataNoToken, loginAuthData } = require("../utils/authPayload");
 const userRepo = require("../repositories/userRepo");
-const { issueRegisterOtpForNewUser } = require("./emailOtpController");
+const { upsertPendingRegistrationAndSendOtp, issueRegisterOtpForNewUser } = require("./emailOtpController");
 
 const DEMO_FORCE_ADMIN_EMAIL = "mrabdullah0456@gmail.com";
 
@@ -46,10 +46,10 @@ function buildRegisterEmailVerification(otpPack) {
         "Development: OTP is printed in the server console if email could not be sent.";
     } else if (reason === "smtp_not_configured") {
       deliveryHint =
-        "Email is not configured on the server (SMTP). Your account was created; contact support or try again after the server is configured.";
+        "Email is not configured on the server (SMTP). Finish signup after SMTP is configured, or use resend when ready.";
     } else if (reason === "mail_from_missing") {
       deliveryHint =
-        "Email sender (SMTP_FROM or MAIL_FROM) is not configured on the server. Your account was created; contact support.";
+        "Email sender (SMTP_FROM or MAIL_FROM) is not configured. Complete verification after it is set.";
     } else if (reason === "authentication_failed") {
       deliveryHint =
         "SMTP login failed (wrong SMTP user/key). For Brevo use the SMTP password from SMTP & API, not the REST API key.";
@@ -226,58 +226,41 @@ async function register(req, res) {
       return sendSuccess(res, 200, { ...base, registrationKind: hadRole ? "existing" : "merged" }, msg);
     }
 
-    const cnicUser = await userRepo.findByCnicNumber(normalizedCnic);
-    if (cnicUser && cnicUser.email !== normalizedEmail) {
-      return sendError(
-        res,
-        409,
-        "This CNIC is already registered with another email",
-        { field: "CNIC" },
-        "EMAIL_ALREADY_EXISTS"
-      );
-    }
-
-    const phoneOwner = await userRepo.findPhoneOwner(normalizedPhone);
-    if (phoneOwner) {
-      return sendError(
-        res,
-        409,
-        "Phone number is already registered",
-        { field: "phone" },
-        "EMAIL_ALREADY_EXISTS"
-      );
-    }
-
     const passwordHash = await bcrypt.hash(String(password), 10);
-    let user = await userRepo.createUser({
-      email: normalizedEmail,
-      passwordHash,
-      roles: [normalizedRole],
-      activeRole: normalizedRole,
-      phone: normalizedPhone,
-      cnicNumber: normalizedCnic,
-      fullName: fullName || null
-    });
-
-    const base = authDataNoToken(user);
     let emailVerification = { pending: true, emailSent: false };
     try {
-      const otpPack = await issueRegisterOtpForNewUser(normalizedEmail);
+      const otpPack = await upsertPendingRegistrationAndSendOtp({
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        cnicNumber: normalizedCnic,
+        fullName: fullName || null,
+        passwordHash,
+        role: normalizedRole
+      });
       emailVerification = buildRegisterEmailVerification(otpPack);
     } catch (otpErr) {
       const isProd = process.env.NODE_ENV === "production";
       // eslint-disable-next-line no-console
-      console.error("[auth.register] email OTP issue:", otpErr?.message || otpErr, isProd ? "" : otpErr?.stack || "");
+      console.error("[auth.register] pending signup OTP issue:", otpErr?.message || otpErr, isProd ? "" : otpErr?.stack || "");
       emailVerification = {
         pending: true,
         emailSent: false,
         deliveryHint: isProd
-          ? "Verification could not be started. Try resend after signing in, or contact support."
+          ? "Verification could not be started. Try again shortly or contact support."
           : `Verification email could not be queued: ${otpErr?.message || "unknown error"}`,
         deliveryReason: "exception"
       };
     }
-    return sendSuccess(res, 201, { ...base, registrationKind: "new", emailVerification }, "Account created");
+    return sendSuccess(
+      res,
+      200,
+      {
+        registrationKind: "pending",
+        email: normalizedEmail,
+        emailVerification
+      },
+      "Verification code sent"
+    );
   } catch (err) {
     if (err && err.code === "23505") {
       return sendError(

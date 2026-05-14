@@ -194,15 +194,15 @@ function isSmtpDebugLog() {
  * @returns {Promise<boolean>}
  */
 async function verifySmtpConnection() {
-  const pre = validateOutboundMailConfig();
-  if (!pre.ok) {
-    // eslint-disable-next-line no-console
-    console.warn("[emailService] SMTP verify skipped:", pre.reason);
-    return false;
-  }
-  const from = getEffectiveFromAddress();
-  const port = Number(trimEnv("SMTP_PORT")) || 587;
   try {
+    const pre = validateOutboundMailConfig();
+    if (!pre.ok) {
+      // eslint-disable-next-line no-console
+      console.warn("[emailService] SMTP verify skipped:", pre.reason);
+      return false;
+    }
+    const from = getEffectiveFromAddress();
+    const port = Number(trimEnv("SMTP_PORT")) || 587;
     const transporter = createTransporter();
     await transporter.verify();
     // eslint-disable-next-line no-console
@@ -215,7 +215,7 @@ async function verifySmtpConnection() {
   } catch (err) {
     const classified = classifySmtpSendError(err);
     // eslint-disable-next-line no-console
-    console.error("[emailService] SMTP verify FAILED", { ...smtpErrorMeta(err), classified });
+    console.error("[emailService] SMTP verify FAILED (non-fatal)", { ...smtpErrorMeta(err), classified });
     return false;
   }
 }

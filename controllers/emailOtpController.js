@@ -6,6 +6,7 @@ const { signToken } = require("../utils/jwt");
 const { authData } = require("../utils/authPayload");
 const userRepo = require("../repositories/userRepo");
 const emailOtpRepo = require("../repositories/emailOtpRepo");
+const pendingRegistrationRepo = require("../repositories/pendingRegistrationRepo");
 const { sendOtpEmail, sendMail, smtpConfigured, validateOutboundMailConfig, classifySmtpSendError } = require("../services/emailService");
 
 const { PURPOSES } = emailOtpRepo;
@@ -140,6 +141,51 @@ async function issueRegisterOtpForNewUser(email) {
   };
 }
 
+/**
+ * New signup: store hashed password + profile on pending_registrations and email OTP.
+ * Overwrites any previous pending row for the same email (new code, attempts reset).
+ */
+async function upsertPendingRegistrationAndSendOtp({ email, phone, cnicNumber, fullName, passwordHash, role }) {
+  const normalized = String(email || "").trim().toLowerCase();
+  const plain = generateSixDigitCode();
+  const codeHash = await bcrypt.hash(plain, 8);
+  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+  await emailOtpRepo.invalidateOpen(normalized, PURPOSES.REGISTER);
+  await pendingRegistrationRepo.upsert({
+    email: normalized,
+    phone,
+    cnicNumber,
+    fullName,
+    passwordHash,
+    role,
+    codeHash,
+    expiresAt
+  });
+  const delivery = await tryDeliverOtp(normalized, PURPOSES.REGISTER, plain);
+  const devReturn =
+    process.env.NODE_ENV !== "production" && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
+  return {
+    delivery,
+    devOtp: devReturn ? plain : null
+  };
+}
+
+async function assertResendCooldownFromTimestamp(req, res, lastAt) {
+  if (!lastAt) return true;
+  const elapsed = Date.now() - new Date(lastAt).getTime();
+  if (elapsed < RESEND_COOLDOWN_MS) {
+    const retrySec = Math.ceil((RESEND_COOLDOWN_MS - elapsed) / 1000);
+    return sendError(
+      res,
+      429,
+      `Please wait ${retrySec}s before requesting another code`,
+      { retryAfterSeconds: retrySec },
+      "OTP_COOLDOWN"
+    );
+  }
+  return true;
+}
+
 async function assertResendCooldown(req, res, email, purpose) {
   const last = await emailOtpRepo.lastSentAt(email, purpose);
   if (!last) return true;
@@ -163,6 +209,96 @@ async function verifyRegisterOtp(req, res) {
 
   const email = String(req.body.email || "").trim().toLowerCase();
   const code = String(req.body.code || "").trim();
+
+  const pending = await pendingRegistrationRepo.findByEmail(email);
+  if (pending) {
+    const existingUser = await userRepo.findByEmail(email);
+    if (existingUser?.verified) {
+      await pendingRegistrationRepo.deleteByEmail(email);
+      return sendError(res, 409, "This email is already registered. Sign in instead.", null, "EMAIL_ALREADY_EXISTS");
+    }
+    if (existingUser && !existingUser.verified) {
+      await pendingRegistrationRepo.deleteByEmail(email);
+      return sendError(
+        res,
+        400,
+        "An incomplete account already exists for this email. Sign in with your password to finish verification.",
+        null,
+        "LEGACY_PENDING_CLASH"
+      );
+    }
+
+    if (new Date(pending.expires_at).getTime() < Date.now()) {
+      return sendError(res, 400, "Code expired. Request a new one.", null, "OTP_EXPIRED");
+    }
+    if (Number(pending.attempt_count) >= MAX_OTP_ATTEMPTS) {
+      return sendError(res, 429, "Too many attempts. Request a new code.", null, "INVALID_OTP");
+    }
+
+    let match = false;
+    try {
+      match = await bcrypt.compare(code, pending.code_hash);
+    } catch {
+      match = false;
+    }
+    if (!match) {
+      await pendingRegistrationRepo.incrementAttempts(email);
+      return sendError(res, 400, "Invalid code", null, "INVALID_OTP");
+    }
+
+    const cnicUser = await userRepo.findByCnicNumber(pending.cnic_number);
+    if (cnicUser && String(cnicUser.email).toLowerCase() !== email) {
+      return sendError(
+        res,
+        409,
+        "This CNIC is already registered with another email",
+        { field: "CNIC" },
+        "EMAIL_ALREADY_EXISTS"
+      );
+    }
+    const phoneOwner = await userRepo.findPhoneOwner(pending.phone);
+    if (phoneOwner && String(phoneOwner.email).toLowerCase() !== email) {
+      return sendError(
+        res,
+        409,
+        "Phone number is already registered to another account",
+        { field: "phone" },
+        "EMAIL_ALREADY_EXISTS"
+      );
+    }
+
+    let user;
+    try {
+      user = await userRepo.createUser({
+        email: pending.email,
+        passwordHash: pending.password_hash,
+        roles: [pending.role],
+        activeRole: pending.role,
+        phone: pending.phone,
+        cnicNumber: pending.cnic_number,
+        fullName: pending.full_name,
+        verified: true
+      });
+    } catch (err) {
+      if (err && err.code === "23505") {
+        await pendingRegistrationRepo.deleteByEmail(email).catch(() => {});
+        return sendError(
+          res,
+          409,
+          "Email, phone, or CNIC already in use",
+          null,
+          "EMAIL_ALREADY_EXISTS"
+        );
+      }
+      throw err;
+    }
+
+    await pendingRegistrationRepo.deleteByEmail(email);
+    await emailOtpRepo.invalidateOpen(email, PURPOSES.REGISTER);
+
+    const token = signToken(user);
+    return sendSuccess(res, 200, authData(user, token), "Email verified");
+  }
 
   const existingUser = await userRepo.findByEmail(email);
   if (!existingUser) {
@@ -210,6 +346,34 @@ async function resendRegisterOtp(req, res) {
   if (maybeError) return maybeError;
 
   const email = String(req.body.email || "").trim().toLowerCase();
+
+  const pending = await pendingRegistrationRepo.findByEmail(email);
+  if (pending) {
+    const lastAt = await pendingRegistrationRepo.lastUpdatedAt(email);
+    const gate = await assertResendCooldownFromTimestamp(req, res, lastAt);
+    if (gate !== true) return gate;
+
+    const { delivery, devOtp } = await upsertPendingRegistrationAndSendOtp({
+      email,
+      phone: pending.phone,
+      cnicNumber: pending.cnic_number,
+      fullName: pending.full_name,
+      passwordHash: pending.password_hash,
+      role: pending.role
+    });
+    const outbound = validateOutboundMailConfig();
+    const payload = {
+      sent: delivery.delivered || Boolean(devOtp),
+      smtpConfigured: smtpConfigured(),
+      mailOutboundReady: outbound.ok,
+      deliveryFailed: !delivery.delivered && !devOtp,
+      deliveryReason: !delivery.delivered ? delivery.reason || undefined : undefined,
+      deliveryHint: !delivery.delivered && !devOtp ? otpDeliveryHint(delivery.reason) : undefined
+    };
+    if (devOtp) payload.devOtp = devOtp;
+    return sendSuccess(res, 200, payload, "If this account is eligible, a verification code was sent.");
+  }
+
   const user = await userRepo.findByEmail(email);
   if (!user) {
     return sendSuccess(res, 200, { sent: false }, "If an account exists, a code may be sent");
@@ -401,6 +565,7 @@ async function resetPasswordWithOtp(req, res) {
 
 module.exports = {
   issueRegisterOtpForNewUser,
+  upsertPendingRegistrationAndSendOtp,
   verifyRegisterOtp,
   resendRegisterOtp,
   sendForgotPasswordOtp,

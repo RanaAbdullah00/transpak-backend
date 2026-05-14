@@ -4,12 +4,13 @@
   "description": "TransPak backend (Express + PostgreSQL + JWT)",
   "main": "server.js",
   "scripts": {
-    "dev": "nodemon server.js",
+    "dev": "nodemon --config nodemon.json",
     "start": "node server.js",
     "build": "node --check server.js && node --check src/server.js && node --check src/app.js",
     "test": "node --test",
     "seed": "node scripts/seedUsers.js",
-    "seed:admin": "node scripts/seedUsers.js"
+    "seed:admin": "node scripts/seedUsers.js",
+    "db:migrate:otp": "node scripts/applyOtpMigrations.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

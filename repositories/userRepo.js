@@ -89,7 +89,7 @@ async function findByCnicNumber(cnicNumber) {
   return toAuthUser(rows[0]);
 }
 
-async function createUser({ email, passwordHash, roles, activeRole, phone, cnicNumber, fullName }) {
+async function createUser({ email, passwordHash, roles, activeRole, phone, cnicNumber, fullName, verified = false }) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const cleanRoles = Array.isArray(roles)
     ? [...new Set(roles.map(normalizeRole).filter(Boolean))]
@@ -100,8 +100,8 @@ async function createUser({ email, passwordHash, roles, activeRole, phone, cnicN
   const fn = fullName != null ? String(fullName).trim() : null;
 
   const { rows } = await query(
-    `INSERT INTO users (email, password_hash, roles, active_role, phone, cnic_number, full_name)
-     VALUES ($1, $2, $3::text[], $4, $5, $6, $7)
+    `INSERT INTO users (email, password_hash, roles, active_role, phone, cnic_number, full_name, verified)
+     VALUES ($1, $2, $3::text[], $4, $5, $6, $7, $8)
      RETURNING id, email, roles, active_role, blocked, verified,
                full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete`,
     [
@@ -111,7 +111,8 @@ async function createUser({ email, passwordHash, roles, activeRole, phone, cnicN
       active,
       phone != null ? String(phone).trim() : null,
       cnicNumber != null ? String(cnicNumber).trim() : null,
-      fn || null
+      fn || null,
+      Boolean(verified)
     ]
   );
   return toAuthUser(rows[0]);

@@ -1,0 +1,33 @@
+/**
+ * Applies OTP-related SQL migrations using the same DB config as the app.
+ * Run from repo:  cd transpak-backend && node scripts/applyOtpMigrations.js
+ */
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+
+const fs = require("fs");
+const { getPool } = require("../db/pool");
+
+const FILES = ["004_email_otp_challenges.sql", "005_auth_otp_codes.sql", "006_pending_registrations.sql"];
+
+async function main() {
+  const pool = getPool();
+  for (const name of FILES) {
+    const filePath = path.join(__dirname, "..", "db", "migrations", name);
+    if (!fs.existsSync(filePath)) {
+      console.error("Missing migration file:", filePath);
+      process.exit(1);
+    }
+    const sql = fs.readFileSync(filePath, "utf8");
+    console.log("Applying", name, "...");
+    await pool.query(sql);
+    console.log("OK:", name);
+  }
+  await pool.end();
+  console.log("All OTP migrations applied.");
+}
+
+main().catch((err) => {
+  console.error("Migration failed:", err.message || err);
+  process.exit(1);
+});

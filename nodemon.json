@@ -1,0 +1,27 @@
+{
+  "watch": [
+    "server.js",
+    "src",
+    "routes",
+    "controllers",
+    "config",
+    "db",
+    "middleware",
+    "repositories",
+    "services",
+    "sockets",
+    "utils",
+    ".env"
+  ],
+  "ext": "js,mjs,cjs,json",
+  "ignore": [
+    "node_modules/**",
+    "uploads/**",
+    "logs/**",
+    "tmp/**",
+    "**/*.log",
+    "coverage/**",
+    "dist/**"
+  ],
+  "exec": "node server.js"
+}

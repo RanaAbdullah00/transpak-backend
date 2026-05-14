@@ -19,10 +19,19 @@ const disputeRoutes = require("../routes/disputeRoutes");
 const translationRoutes = require("../routes/translationRoutes");
 const uploadRoutes = require("../routes/uploadRoutes");
 
+function parseCorsOriginsFromEnv() {
+  const raw = [process.env.CORS_ORIGIN, process.env.FRONTEND_URL, process.env.VITE_APP_ORIGIN]
+    .filter(Boolean)
+    .join(",");
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   const app = express();
 
-  // If you deploy behind a proxy (Render/Heroku/Nginx), enable this so rate limiting & IPs work correctly.
   app.set("trust proxy", 1);
 
   app.use(
@@ -37,29 +46,48 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     app.use("/uploads", express.static(uploadsDir, { fallthrough: false }));
   }
 
-  const defaultDevOrigins = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174"
-  ];
-  const envOrigins = (process.env.CORS_ORIGIN || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const allowedOrigins = envOrigins.length > 0 ? [...new Set([...defaultDevOrigins, ...envOrigins])] : null;
+  const isProd = process.env.NODE_ENV === "production";
+  const envOrigins = parseCorsOriginsFromEnv();
+  const defaultLocalOrigins = isProd
+    ? []
+    : [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174"
+      ];
+  const allowedOriginsList = [...new Set([...defaultLocalOrigins, ...envOrigins])];
+  const allowReflectAnyOrigin = !isProd && allowedOriginsList.length === 0;
+
+  if (isProd && allowedOriginsList.length === 0) {
+    console.warn(
+      "[cors] NODE_ENV=production but CORS_ORIGIN / FRONTEND_URL / VITE_APP_ORIGIN are empty — browser clients will be rejected unless Origin is absent."
+    );
+  }
 
   app.use(
     cors({
       origin: (origin, callback) => {
         if (!origin) return callback(null, true);
-        if (!allowedOrigins) return callback(null, true);
-        if (allowedOrigins.includes(origin)) return callback(null, true);
+        if (allowReflectAnyOrigin) return callback(null, true);
+        if (allowedOriginsList.length === 0) {
+          if (isProd) return callback(null, false);
+          return callback(null, true);
+        }
+        if (allowedOriginsList.includes(origin)) return callback(null, true);
         return callback(null, false);
       },
       credentials: true
     })
   );
+
+  app.get("/health", (req, res) => {
+    res.status(200).json({
+      ok: true,
+      uptime: process.uptime(),
+      db: dbState?.ready ? "ready" : "unavailable"
+    });
+  });
 
   app.use("/api", globalApiLimiter);
 
@@ -71,7 +99,6 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     })
   );
 
-  // Degraded-mode gate: if DB is down, return a consistent 503 instead of connection resets.
   app.use("/api", (req, res, next) => {
     if (req.path === "/health") return next();
     if (dbState?.ready) return next();
@@ -106,16 +133,17 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     res.status(404).json({ success: false, message: "Route not found", data: null });
   });
 
-  // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     const status = err.statusCode || 500;
-    const isProd = process.env.NODE_ENV === "production";
-    const safeMessage = isProd && status >= 500 ? "Server error" : err.message || "Server error";
+    const isProdEnv = process.env.NODE_ENV === "production";
+    const safeMessage = isProdEnv && status >= 500 ? "Server error" : err.message || "Server error";
     res.status(status).json({ success: false, message: safeMessage, data: null });
   });
 
-  return { app, socketCorsOrigin: allowedOrigins === null ? true : allowedOrigins };
+  const socketCorsOrigin =
+    allowReflectAnyOrigin ? true : allowedOriginsList.length === 0 ? (isProd ? [] : true) : allowedOriginsList;
+
+  return { app, socketCorsOrigin };
 }
 
 module.exports = { createApp };
-

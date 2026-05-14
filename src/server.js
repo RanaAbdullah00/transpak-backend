@@ -4,16 +4,26 @@ const fs = require("fs");
 const http = require("http");
 const { Server } = require("socket.io");
 
-const { verifySmtpConnection } = require("../services/emailService");
+const { verifySmtpConnection, validateOutboundMailConfig } = require("../services/emailService");
+const { isDatabaseUrlConfigured } = require("../db/pool");
 const connectDB = require("../config/db");
 const realtimeHub = require("../services/realtimeHub");
 const registerSocketHandlers = require("../sockets");
 const { createApp } = require("./app");
 
 const PORT = process.env.PORT || 5000;
+const listenPort = Number(PORT) || 5000;
+const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
+const hasPlatformAssignedPort = String(process.env.PORT ?? "").trim() !== "";
+const allowPortFallback =
+  String(process.env.ALLOW_PORT_FALLBACK || "").toLowerCase() === "true" &&
+  process.env.NODE_ENV !== "production" &&
+  !hasPlatformAssignedPort;
+
 const DB_RETRY_BASE_MS = Number(process.env.DB_RETRY_BASE_MS || 5000);
 const DB_RETRY_MAX_QUICK = Number(process.env.DB_RETRY_MAX_QUICK || 8);
 const DB_RETRY_SLOW_MS = Number(process.env.DB_RETRY_SLOW_MS || 120000);
+const MAX_PORT_FALLBACK_ATTEMPTS = 25;
 
 function ensureUploadsDir() {
   const uploadsDir = path.join(__dirname, "..", "uploads");
@@ -53,10 +63,8 @@ async function seedAdminIfNeeded() {
       cnicNumber: cfg.cnic,
       fullName: cfg.name
     });
-    // eslint-disable-next-line no-console
     console.log(`Admin ensured: ${cfg.email}`);
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn("Seed admin skipped:", err.message);
   }
 }
@@ -83,10 +91,8 @@ async function ensureTranspakDemoAdmin() {
       cnicNumber: cnic,
       fullName: TRANSPAK_DEMO_ADMIN_NAME
     });
-    // eslint-disable-next-line no-console
     console.log("Admin user ensured");
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error("TransPak: ensureTranspakDemoAdmin failed:", err.message || err);
   }
 }
@@ -107,7 +113,6 @@ async function start() {
       dbState.ready = true;
       dbState.error = null;
       quickAttempts = 0;
-      // eslint-disable-next-line no-console
       console.log("[db] connected");
       await seedAdminIfNeeded();
       await ensureTranspakDemoAdmin();
@@ -120,87 +125,93 @@ async function start() {
       quickAttempts += 1;
       if (quickAttempts <= DB_RETRY_MAX_QUICK) {
         const backoff = Math.min(DB_RETRY_BASE_MS * 2 ** Math.min(quickAttempts - 1, 5), 60000);
-        // eslint-disable-next-line no-console
         console.error(`[db] connection failed (quick retry ${quickAttempts}/${DB_RETRY_MAX_QUICK}) ${safeDetail}; next in ${backoff}ms`);
         setTimeout(connectWithRetry, backoff);
         return;
       }
-      // eslint-disable-next-line no-console
       console.error(`[db] quick retries exhausted; backing off ${DB_RETRY_SLOW_MS}ms — ${safeDetail}`);
       quickAttempts = 0;
       setTimeout(connectWithRetry, DB_RETRY_SLOW_MS);
     }
   }
 
-  // Start DB connection loop (do not block server boot).
   connectWithRetry();
 
   const uploadsDir = ensureUploadsDir();
   const { app, socketCorsOrigin } = createApp({ uploadsDir, dbState });
 
-  const basePort = Number(PORT) || 5000;
-  const maxAttempts = 20;
-  const allowPortFallback = String(process.env.ALLOW_PORT_FALLBACK || "").toLowerCase() === "true";
+  const httpServer = http.createServer(app);
+  const io = new Server(httpServer, {
+    cors: { origin: socketCorsOrigin, credentials: true },
+    transports: ["websocket", "polling"],
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000
+  });
 
-  const tryListen = (port, attempt = 0) => {
-    const httpServer = http.createServer(app);
-    const io = new Server(httpServer, {
-      cors: { origin: socketCorsOrigin, credentials: true }
-    });
+  realtimeHub.setIO(io);
+  registerSocketHandlers(io);
 
-    realtimeHub.setIO(io);
-    registerSocketHandlers(io);
+  const smtpPre = validateOutboundMailConfig();
+  const smtpLabel = smtpPre.ok ? "enabled" : `disabled (${smtpPre.reason})`;
 
-    httpServer.listen(port, () => {
-      // eslint-disable-next-line no-console
-      console.log(`TransPak backend (HTTP + Socket.io) on port ${port}`);
-      if (String(process.env.SMTP_VERIFY_ON_START || "").toLowerCase() === "true") {
-        verifySmtpConnection().catch((e) => {
-          // eslint-disable-next-line no-console
-          console.error("[server] SMTP_VERIFY_ON_START:", e?.message || e);
-        });
+  console.log("[server] boot", {
+    NODE_ENV: process.env.NODE_ENV || "undefined",
+    PORT: listenPort,
+    BIND_HOST,
+    platformAssignedPort: hasPlatformAssignedPort,
+    allowPortFallback,
+    DATABASE_URL: isDatabaseUrlConfigured() ? "set" : "missing",
+    SMTP: smtpLabel,
+    DB: dbState.ready ? "ready" : "pending_first_connection"
+  });
+
+  let listenAttemptPort = listenPort;
+
+  function startListen(attempt) {
+    httpServer.once("error", (err) => {
+      if (err && err.code === "EADDRINUSE" && allowPortFallback && attempt < MAX_PORT_FALLBACK_ATTEMPTS) {
+        listenAttemptPort += 1;
+        console.warn(`[server] Port ${listenAttemptPort - 1} busy (EADDRINUSE); trying ${listenAttemptPort}...`);
+        startListen(attempt + 1);
+        return;
       }
-    });
-
-    httpServer.on("error", (err) => {
       if (err && err.code === "EADDRINUSE") {
-        if (allowPortFallback && attempt < maxAttempts) {
-          // eslint-disable-next-line no-console
-          console.warn(`Port ${port} already in use. Trying ${port + 1}...`);
-          try {
-            io.close();
-            httpServer.close();
-          } catch {
-            // ignore
-          }
-          return tryListen(port + 1, attempt + 1);
-        }
-        // eslint-disable-next-line no-console
-        console.error(`[server] Port ${port} is already in use (EADDRINUSE).`);
-        if (allowPortFallback && attempt >= maxAttempts) {
-          // eslint-disable-next-line no-console
-          console.error(`[server] No free port found after ${maxAttempts} attempts from ${basePort}.`);
-        }
-        if (!allowPortFallback) {
-          // eslint-disable-next-line no-console
-          console.error(
-            "[server] Another process is bound to this port (often a duplicate `npm run dev`). Stop it, or set ALLOW_PORT_FALLBACK=true and VITE_PROXY_TARGET to the same port."
-          );
-          // eslint-disable-next-line no-console
-          console.error(`[server] Windows: netstat -ano | findstr :${basePort}`);
+        console.error(`[server] Port ${listenAttemptPort} is already in use (EADDRINUSE).`);
+        if (hasPlatformAssignedPort) {
+          console.error("[server] PORT is set by the platform (Render/Railway); only one process may bind it.");
+        } else if (!allowPortFallback) {
+          console.error("[server] Stop the other process or set ALLOW_PORT_FALLBACK=true for local multi-instance dev.");
+          console.error(`[server] Inspect listeners on :${listenPort} (e.g. netstat, ss, or Get-NetTCPConnection on Windows).`);
+        } else {
+          console.error(`[server] No free port after ${MAX_PORT_FALLBACK_ATTEMPTS} attempts from ${listenPort}.`);
         }
         process.exit(1);
+        return;
       }
-      // eslint-disable-next-line no-console
       console.error("Server listen failed:", err.message || err);
       process.exit(1);
     });
 
-    return httpServer;
-  };
+    httpServer.listen(listenAttemptPort, BIND_HOST, () => {
+      console.log("[server] listening", {
+        url: `http://${BIND_HOST}:${listenAttemptPort}`,
+        boundPort: listenAttemptPort,
+        NODE_ENV: process.env.NODE_ENV || "development",
+        SMTP: smtpLabel,
+        DB: dbState.ready ? "ready" : "connecting"
+      });
+      console.log(`TransPak backend (HTTP + Socket.io) on port ${listenAttemptPort}`);
 
-  tryListen(basePort);
+      if (String(process.env.SMTP_VERIFY_ON_START || "").toLowerCase() === "true") {
+        verifySmtpConnection().catch((e) => {
+          console.error("[server] SMTP_VERIFY_ON_START (non-fatal):", e?.message || e);
+        });
+      }
+    });
+  }
+
+  startListen(0);
 }
 
 module.exports = { start };
-

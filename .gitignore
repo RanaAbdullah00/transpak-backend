@@ -1,7 +1,23 @@
-node_modules
+node_modules/
 .env
+.env.*
+!.env.example
 .DS_Store
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
+# Runtime / local artifacts (avoid nodemon loops and accidental commits)
+uploads/
+logs/
+tmp/
+*.log
+coverage/
+dist/
+
+# OS / editor
+Thumbs.db
+*.swp
+.idea/
+.vscode/

@@ -271,6 +271,24 @@ CREATE TABLE IF NOT EXISTS ratings (
   CONSTRAINT ratings_unique UNIQUE (shipment_id, from_user_id)
 );
 
+-- Pending signup: OTP + profile fields before users row exists
+CREATE TABLE IF NOT EXISTS pending_registrations (
+  email text PRIMARY KEY,
+  phone text NOT NULL,
+  cnic_number text NOT NULL,
+  full_name text,
+  password_hash text NOT NULL,
+  role text NOT NULL CHECK (lower(trim(role)) IN ('shipper', 'carrier')),
+  code_hash text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  attempt_count int NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_registrations_updated
+  ON pending_registrations (lower(trim(email)), updated_at DESC);
+
 -- Email OTP (registration + password reset)
 CREATE TABLE IF NOT EXISTS email_otp_challenges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
