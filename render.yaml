@@ -2,7 +2,7 @@
 # (no parent monorepo). If your repo root is the FYP folder instead, use ../render.yaml there.
 #
 # After first deploy: Shell → npm run db:migrate:otp
-# Set CORS_ORIGIN in the Dashboard (required for browser + Socket.io).
+# CORS_ORIGIN defaults for Cloudflare Pages + Render; override in the Dashboard if needed.
 
 databases:
   - name: transpak-db
@@ -27,8 +27,8 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGIN
-        sync: false
+        value: "https://20f26555.transpak-frontend.pages.dev,https://transpak-backend.onrender.com"
       - key: CORS_EXTRA_ORIGINS
-        value: "http://localhost:5173,http://127.0.0.1:5173"
+        value: "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173"
       - key: PG_CONNECTION_TIMEOUT_MS
         value: "30000"
