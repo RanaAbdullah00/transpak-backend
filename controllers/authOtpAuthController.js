@@ -4,6 +4,8 @@ const { validationResult } = require("express-validator");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const authOtpCodeRepo = require("../repositories/authOtpCodeRepo");
 const { sendOtpEmail, validateOutboundMailConfig } = require("../services/emailService");
+const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
+const devAuthTestState = require("../services/devAuthTestState");
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SEND_COOLDOWN_MS = 60 * 1000;
@@ -30,6 +32,9 @@ function generateSixDigitCode() {
 
 async function assertSendCooldown(res, email) {
   try {
+    if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(email)) {
+      return true;
+    }
     const last = await authOtpCodeRepo.getLastSentTime(email);
     if (!last) return true;
     const elapsed = Date.now() - last.getTime();
@@ -53,6 +58,10 @@ async function sendAuthOtp(req, res) {
     if (maybeError) return maybeError;
 
     const email = String(req.body.email || "").trim().toLowerCase();
+
+    if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(email)) {
+      await devAuthTestState.clearAuthOtpCodesForEmail(undefined, email);
+    }
 
     const gate = await assertSendCooldown(res, email);
     if (gate !== true) return gate;

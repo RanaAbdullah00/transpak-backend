@@ -11,13 +11,16 @@ const realtimeHub = require("../services/realtimeHub");
 const registerSocketHandlers = require("../sockets");
 const { createApp } = require("./app");
 
-const PORT = process.env.PORT || 5000;
-const listenPort = Number(PORT) || 5000;
 const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
 
-/** PORT is fixed by the host only on known PaaS — not when PORT is set in a local .env file. */
+/**
+ * True when this process runs on a PaaS that assigns a single HTTP port (Render, Railway, Fly, Cloud Run).
+ * Never try PORT+1 fallback here — the reverse proxy only routes to the assigned PORT.
+ */
 function isPaasPortLock() {
   if (String(process.env.FORCE_PLATFORM_PORT || "").toLowerCase() === "true") return true;
+  const renderExt = String(process.env.RENDER_EXTERNAL_URL || "");
+  if (renderExt.includes("onrender.com")) return true;
   if (String(process.env.RENDER || "").toLowerCase() === "true") return true;
   if (String(process.env.RAILWAY_ENVIRONMENT || "").trim()) return true;
   if (String(process.env.FLY_APP_NAME || "").trim()) return true;
@@ -25,13 +28,28 @@ function isPaasPortLock() {
   return false;
 }
 
-const hasPlatformAssignedPort = isPaasPortLock();
+const paasPortLock = isPaasPortLock();
+const envPortRaw = String(process.env.PORT || "").trim();
+const initialListenPort = paasPortLock
+  ? Number(envPortRaw)
+  : Number(envPortRaw || 5000) || 5000;
+
+if (paasPortLock && (!Number.isFinite(initialListenPort) || initialListenPort <= 0)) {
+  console.error(
+    "[server] Invalid or missing PORT on this host. On Render, do not set PORT in Environment — the platform injects it."
+  );
+  process.exit(1);
+}
+
 const allowPortFallbackEnv = String(process.env.ALLOW_PORT_FALLBACK || "").toLowerCase();
+const denyPortFallback = allowPortFallbackEnv === "false";
+/** Laptop: try next ports if busy. Render: never (single assigned PORT only). */
 const allowPortFallback =
-  !hasPlatformAssignedPort &&
-  process.env.NODE_ENV !== "production" &&
+  !paasPortLock &&
+  !denyPortFallback &&
   (allowPortFallbackEnv === "true" ||
-    (allowPortFallbackEnv !== "false" && process.env.NODE_ENV === "development"));
+    process.env.NODE_ENV !== "production" ||
+    !String(process.env.RENDER || "").trim());
 
 const DB_RETRY_BASE_MS = Number(process.env.DB_RETRY_BASE_MS || 5000);
 const DB_RETRY_MAX_QUICK = Number(process.env.DB_RETRY_MAX_QUICK || 8);
@@ -170,16 +188,17 @@ async function start() {
 
   console.log("[server] boot", {
     NODE_ENV: process.env.NODE_ENV || "undefined",
-    PORT: listenPort,
+    PORT: initialListenPort,
     BIND_HOST,
-    platformAssignedPort: hasPlatformAssignedPort,
+    paasPortLock,
     allowPortFallback,
     DATABASE_URL: isDatabaseUrlConfigured() ? "set" : "missing",
     SMTP: smtpLabel,
     DB: dbState.ready ? "ready" : "pending_first_connection"
   });
 
-  let listenAttemptPort = listenPort;
+  let listenAttemptPort = initialListenPort;
+  let listenAnnounced = false;
 
   function startListen(attempt) {
     httpServer.once("error", (err) => {
@@ -191,15 +210,17 @@ async function start() {
       }
       if (err && err.code === "EADDRINUSE") {
         console.error(`[server] Port ${listenAttemptPort} is already in use (EADDRINUSE).`);
-        if (hasPlatformAssignedPort) {
+        if (paasPortLock) {
           console.error(
             "[server] PORT is fixed by your hosting provider (Render/Railway/Fly, etc.); only one process may bind it."
           );
         } else if (!allowPortFallback) {
           console.error("[server] Stop the other process or set ALLOW_PORT_FALLBACK=true for local multi-instance dev.");
-          console.error(`[server] Inspect listeners on :${listenPort} (e.g. netstat, ss, or Get-NetTCPConnection on Windows).`);
+          console.error(
+            `[server] Inspect listeners on :${initialListenPort} (e.g. netstat, ss, or Get-NetTCPConnection on Windows).`
+          );
         } else {
-          console.error(`[server] No free port after ${MAX_PORT_FALLBACK_ATTEMPTS} attempts from ${listenPort}.`);
+          console.error(`[server] No free port after ${MAX_PORT_FALLBACK_ATTEMPTS} attempts from ${initialListenPort}.`);
         }
         process.exit(1);
         return;
@@ -209,6 +230,13 @@ async function start() {
     });
 
     httpServer.listen(listenAttemptPort, BIND_HOST, () => {
+      if (listenAnnounced) return;
+      listenAnnounced = true;
+      if (!paasPortLock && listenAttemptPort !== initialListenPort) {
+        console.warn(
+          `[server] Bound on port ${listenAttemptPort} (first choice was ${initialListenPort}). Set transpak-frontend VITE_PROXY_TARGET=http://127.0.0.1:${listenAttemptPort} while using npm run dev.`
+        );
+      }
       console.log("[server] listening", {
         url: `http://${BIND_HOST}:${listenAttemptPort}`,
         boundPort: listenAttemptPort,

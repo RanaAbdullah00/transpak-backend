@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 
+const { isDatabaseUrlConfigured } = require("../db/pool");
+
 const { globalApiLimiter } = require("../middleware/apiRateLimit");
 
 const authRoutes = require("../routes/authRoutes");
@@ -20,7 +22,12 @@ const translationRoutes = require("../routes/translationRoutes");
 const uploadRoutes = require("../routes/uploadRoutes");
 
 function parseCorsOriginsFromEnv() {
-  const raw = [process.env.CORS_ORIGIN, process.env.FRONTEND_URL, process.env.VITE_APP_ORIGIN]
+  const raw = [
+    process.env.CORS_ORIGIN,
+    process.env.FRONTEND_URL,
+    process.env.VITE_APP_ORIGIN,
+    process.env.CORS_EXTRA_ORIGINS
+  ]
     .filter(Boolean)
     .join(",");
   return raw
@@ -61,7 +68,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   if (isProd && allowedOriginsList.length === 0) {
     console.warn(
-      "[cors] NODE_ENV=production but CORS_ORIGIN / FRONTEND_URL / VITE_APP_ORIGIN are empty — browser clients will be rejected unless Origin is absent."
+      "[cors] NODE_ENV=production but CORS_ORIGIN / FRONTEND_URL / VITE_APP_ORIGIN / CORS_EXTRA_ORIGINS are empty — browser clients will be rejected unless Origin is absent."
     );
   }
 
@@ -85,7 +92,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     res.status(200).json({
       ok: true,
       uptime: process.uptime(),
-      db: dbState?.ready ? "ready" : "unavailable"
+      db: dbState?.ready ? "ready" : "unavailable",
+      databaseUrlConfigured: isDatabaseUrlConfigured()
     });
   });
 
@@ -104,8 +112,11 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     if (dbState?.ready) return next();
     return res.status(503).json({
       success: false,
-      message: "Database unavailable. Start the backend database and retry.",
-      data: null
+      message: "Database unavailable. Verify DATABASE_URL and run migrations (see Render Shell: npm run db:migrate:otp).",
+      data: {
+        databaseUrlConfigured: isDatabaseUrlConfigured(),
+        hint: "transpak-backend: npm run db:migrate:otp"
+      }
     });
   });
 

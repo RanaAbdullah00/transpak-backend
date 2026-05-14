@@ -8,6 +8,8 @@ const userRepo = require("../repositories/userRepo");
 const emailOtpRepo = require("../repositories/emailOtpRepo");
 const pendingRegistrationRepo = require("../repositories/pendingRegistrationRepo");
 const { sendOtpEmail, sendMail, smtpConfigured, validateOutboundMailConfig, classifySmtpSendError } = require("../services/emailService");
+const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
+const devAuthTestState = require("../services/devAuthTestState");
 
 const { PURPOSES } = emailOtpRepo;
 
@@ -122,6 +124,9 @@ async function tryDeliverOtp(email, purpose, plainCode) {
  */
 async function issueRegisterOtpForNewUser(email) {
   const normalized = String(email || "").trim().toLowerCase();
+  if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalized)) {
+    await devAuthTestState.clearOtpTablesForEmail(normalized);
+  }
   const plain = generateSixDigitCode();
   const codeHash = await bcrypt.hash(plain, 8);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
@@ -147,6 +152,14 @@ async function issueRegisterOtpForNewUser(email) {
  */
 async function upsertPendingRegistrationAndSendOtp({ email, phone, cnicNumber, fullName, passwordHash, role }) {
   const normalized = String(email || "").trim().toLowerCase();
+  /*
+   * DEV_MODE + DEV_AUTH_TEST_EMAILS: wipe pending + OTP rows for this email before each new
+   * signup OTP so the same address can be exercised repeatedly without duplicate / stale rows.
+   * Production: no-op (isDevAuthRelaxEnabled is false).
+   */
+  if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalized)) {
+    await devAuthTestState.clearOtpAndPendingForEmail(normalized);
+  }
   const plain = generateSixDigitCode();
   const codeHash = await bcrypt.hash(plain, 8);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
@@ -170,7 +183,10 @@ async function upsertPendingRegistrationAndSendOtp({ email, phone, cnicNumber, f
   };
 }
 
-async function assertResendCooldownFromTimestamp(req, res, lastAt) {
+async function assertResendCooldownFromTimestamp(req, res, lastAt, emailForDevBypass) {
+  if (isDevAuthRelaxEnabled() && emailForDevBypass && isAllowlistedDevTestEmail(emailForDevBypass)) {
+    return true;
+  }
   if (!lastAt) return true;
   const elapsed = Date.now() - new Date(lastAt).getTime();
   if (elapsed < RESEND_COOLDOWN_MS) {
@@ -187,6 +203,9 @@ async function assertResendCooldownFromTimestamp(req, res, lastAt) {
 }
 
 async function assertResendCooldown(req, res, email, purpose) {
+  if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(email)) {
+    return true;
+  }
   const last = await emailOtpRepo.lastSentAt(email, purpose);
   if (!last) return true;
   const elapsed = Date.now() - new Date(last).getTime();
@@ -210,7 +229,21 @@ async function verifyRegisterOtp(req, res) {
   const email = String(req.body.email || "").trim().toLowerCase();
   const code = String(req.body.code || "").trim();
 
-  const pending = await pendingRegistrationRepo.findByEmail(email);
+  let pending = await pendingRegistrationRepo.findByEmail(email);
+  /*
+   * Development: a user row may exist (unverified) while a stale pending_registrations row remains
+   * from an earlier signup attempt — verify would otherwise return LEGACY_PENDING_CLASH. In
+   * non-production with DEV_MODE, drop the stale pending row so verification can use the
+   * email_otp_challenges path for the existing account. Production unchanged.
+   */
+  if (isDevAuthRelaxEnabled() && pending) {
+    const existingEarly = await userRepo.findByEmail(email);
+    if (existingEarly && !existingEarly.verified) {
+      await pendingRegistrationRepo.deleteByEmail(email);
+      pending = await pendingRegistrationRepo.findByEmail(email);
+    }
+  }
+
   if (pending) {
     const existingUser = await userRepo.findByEmail(email);
     if (existingUser?.verified) {
@@ -350,7 +383,7 @@ async function resendRegisterOtp(req, res) {
   const pending = await pendingRegistrationRepo.findByEmail(email);
   if (pending) {
     const lastAt = await pendingRegistrationRepo.lastUpdatedAt(email);
-    const gate = await assertResendCooldownFromTimestamp(req, res, lastAt);
+    const gate = await assertResendCooldownFromTimestamp(req, res, lastAt, email);
     if (gate !== true) return gate;
 
     const { delivery, devOtp } = await upsertPendingRegistrationAndSendOtp({
@@ -422,6 +455,9 @@ async function sendForgotPasswordOtp(req, res) {
   const plain = generateSixDigitCode();
   const codeHash = await bcrypt.hash(plain, 8);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+  if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(email)) {
+    await devAuthTestState.clearOtpTablesForEmail(email);
+  }
   await emailOtpRepo.invalidateOpen(email, PURPOSES.PASSWORD_RESET);
   await emailOtpRepo.insertChallenge({
     email,

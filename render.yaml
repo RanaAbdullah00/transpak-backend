@@ -28,3 +28,7 @@ services:
         generateValue: true
       - key: CORS_ORIGIN
         sync: false
+      - key: CORS_EXTRA_ORIGINS
+        value: "http://localhost:5173,http://127.0.0.1:5173"
+      - key: PG_CONNECTION_TIMEOUT_MS
+        value: "30000"

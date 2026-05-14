@@ -14,6 +14,7 @@ function buildSslOption(connectionString) {
   const inferred =
     s.includes("sslmode=require") ||
     s.includes("sslmode=verify-full") ||
+    s.includes("dpg-") ||
     s.includes("render.com") ||
     s.includes("railway.app") ||
     s.includes("neon.tech") ||
@@ -47,6 +48,8 @@ function buildPgConfigFromEnv() {
 function getConnectionTimeoutMs() {
   const n = Number(process.env.PG_CONNECTION_TIMEOUT_MS);
   if (Number.isFinite(n) && n >= 1000 && n <= 120000) return n;
+  const url = String(process.env.DATABASE_URL || "").toLowerCase();
+  if (url.includes("render.com") || url.includes("dpg-")) return 30000;
   return 10000;
 }
 

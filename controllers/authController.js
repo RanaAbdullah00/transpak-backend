@@ -5,6 +5,8 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { authData, authDataNoToken, loginAuthData } = require("../utils/authPayload");
 const userRepo = require("../repositories/userRepo");
 const { upsertPendingRegistrationAndSendOtp, issueRegisterOtpForNewUser } = require("./emailOtpController");
+const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
+const devAuthTestState = require("../services/devAuthTestState");
 
 const DEMO_FORCE_ADMIN_EMAIL = "mrabdullah0456@gmail.com";
 
@@ -117,8 +119,34 @@ async function register(req, res) {
     }
 
     const existing = await userRepo.findByEmail(normalizedEmail);
+    let row = await userRepo.findRowByEmailWithPassword(normalizedEmail);
+    let passwordOk = false;
+    if (row?.password_hash) {
+      try {
+        passwordOk = await bcrypt.compare(String(password), row.password_hash);
+      } catch {
+        passwordOk = false;
+      }
+    }
+
+    /*
+     * DEV_MODE + DEV_AUTH_TEST_EMAILS (non-production only): allow "re-registering" the same
+     * allowlisted mailbox with a new password for iterative OTP testing. Clears OTP/pending state,
+     * updates password hash, sets verified=false — user row and FK-related data stay intact.
+     * Reversible: turn off DEV_MODE or remove the email from DEV_AUTH_TEST_EMAILS.
+     */
+    if (existing && !passwordOk && isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalizedEmail)) {
+      await devAuthTestState.clearOtpAndPendingForEmail(normalizedEmail);
+      const nextHash = await bcrypt.hash(String(password), 10);
+      await userRepo.updatePasswordHashByEmail(normalizedEmail, nextHash);
+      await userRepo.setVerifiedByEmail(normalizedEmail, false);
+      row = await userRepo.findRowByEmailWithPassword(normalizedEmail);
+      passwordOk = row?.password_hash
+        ? await bcrypt.compare(String(password), row.password_hash).catch(() => false)
+        : false;
+    }
+
     if (existing) {
-      const row = await userRepo.findRowByEmailWithPassword(normalizedEmail);
       if (!row?.password_hash) {
         return sendError(
           res,
@@ -128,8 +156,8 @@ async function register(req, res) {
           "EMAIL_ALREADY_EXISTS"
         );
       }
-      const passwordOk = await bcrypt.compare(String(password), row.password_hash);
-      if (!passwordOk) {
+      const passwordOkFinal = passwordOk;
+      if (!passwordOkFinal) {
         return sendError(
           res,
           401,
