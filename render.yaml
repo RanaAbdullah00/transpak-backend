@@ -1,24 +1,30 @@
-# TransPak backend on Render (free tier friendly).
-# Docs: https://render.com/docs/blueprint-spec
+# TransPak backend only — use this file when THIS FOLDER is the Git repository root
+# (no parent monorepo). If your repo root is the FYP folder instead, use ../render.yaml there.
 #
-# Deploy steps (summary):
-# 1. Create a PostgreSQL instance on Render (or Railway) and copy DATABASE_URL (sslmode=require is common).
-# 2. Create a Web Service from this repo; root directory: transpak-backend (or monorepo subdir).
-# 3. Set env: NODE_ENV=production, DATABASE_URL, JWT_SECRET, CORS_ORIGIN (your frontend URL(s), comma-separated),
-#    Cloudinary + Brevo/SMTP vars as needed.
-# 4. Health check path: /health (no DB required). API health with DB flag: GET /api/health
-# 5. Socket.io shares the same origin and PORT as HTTP; point the frontend at the same public URL.
+# After first deploy: Shell → npm run db:migrate:otp
+# Set CORS_ORIGIN in the Dashboard (required for browser + Socket.io).
 
-# If your Git repository root is this backend folder only, remove the `rootDir` line below.
+databases:
+  - name: transpak-db
+    plan: free
+    databaseName: transpak
+
 services:
   - type: web
     name: transpak-backend
     runtime: node
     plan: free
-    rootDir: transpak-backend
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: transpak-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        sync: false

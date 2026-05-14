@@ -2,6 +2,9 @@
   "name": "transpak-backend",
   "version": "1.0.0",
   "description": "TransPak backend (Express + PostgreSQL + JWT)",
+  "engines": {
+    "node": ">=18 <23"
+  },
   "main": "server.js",
   "scripts": {
     "dev": "nodemon --config nodemon.json",

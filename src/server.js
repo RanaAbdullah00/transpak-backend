@@ -14,11 +14,24 @@ const { createApp } = require("./app");
 const PORT = process.env.PORT || 5000;
 const listenPort = Number(PORT) || 5000;
 const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
-const hasPlatformAssignedPort = String(process.env.PORT ?? "").trim() !== "";
+
+/** PORT is fixed by the host only on known PaaS — not when PORT is set in a local .env file. */
+function isPaasPortLock() {
+  if (String(process.env.FORCE_PLATFORM_PORT || "").toLowerCase() === "true") return true;
+  if (String(process.env.RENDER || "").toLowerCase() === "true") return true;
+  if (String(process.env.RAILWAY_ENVIRONMENT || "").trim()) return true;
+  if (String(process.env.FLY_APP_NAME || "").trim()) return true;
+  if (String(process.env.K_SERVICE || "").trim()) return true;
+  return false;
+}
+
+const hasPlatformAssignedPort = isPaasPortLock();
+const allowPortFallbackEnv = String(process.env.ALLOW_PORT_FALLBACK || "").toLowerCase();
 const allowPortFallback =
-  String(process.env.ALLOW_PORT_FALLBACK || "").toLowerCase() === "true" &&
+  !hasPlatformAssignedPort &&
   process.env.NODE_ENV !== "production" &&
-  !hasPlatformAssignedPort;
+  (allowPortFallbackEnv === "true" ||
+    (allowPortFallbackEnv !== "false" && process.env.NODE_ENV === "development"));
 
 const DB_RETRY_BASE_MS = Number(process.env.DB_RETRY_BASE_MS || 5000);
 const DB_RETRY_MAX_QUICK = Number(process.env.DB_RETRY_MAX_QUICK || 8);
@@ -179,7 +192,9 @@ async function start() {
       if (err && err.code === "EADDRINUSE") {
         console.error(`[server] Port ${listenAttemptPort} is already in use (EADDRINUSE).`);
         if (hasPlatformAssignedPort) {
-          console.error("[server] PORT is set by the platform (Render/Railway); only one process may bind it.");
+          console.error(
+            "[server] PORT is fixed by your hosting provider (Render/Railway/Fly, etc.); only one process may bind it."
+          );
         } else if (!allowPortFallback) {
           console.error("[server] Stop the other process or set ALLOW_PORT_FALLBACK=true for local multi-instance dev.");
           console.error(`[server] Inspect listeners on :${listenPort} (e.g. netstat, ss, or Get-NetTCPConnection on Windows).`);
