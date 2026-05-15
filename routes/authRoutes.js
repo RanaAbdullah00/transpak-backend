@@ -12,6 +12,7 @@ const {
 const { sendAuthOtp, verifyAuthOtp, resendAuthOtp } = require("../controllers/authOtpAuthController");
 const { protect } = require("../middleware/authMiddleware");
 const userRepo = require("../repositories/userRepo");
+const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
@@ -67,7 +68,7 @@ router.post(
   "/send-otp",
   authOtpSendLimiter,
   [body("email").trim().isEmail().withMessage("Valid email is required")],
-  sendAuthOtp
+  asyncHandler(sendAuthOtp)
 );
 
 router.post(
@@ -82,14 +83,14 @@ router.post(
       .matches(/^[0-9]+$/)
       .withMessage("Code must be numeric")
   ],
-  verifyAuthOtp
+  asyncHandler(verifyAuthOtp)
 );
 
 router.post(
   "/resend-otp",
   authOtpSendLimiter,
   [body("email").trim().isEmail().withMessage("Valid email is required")],
-  resendAuthOtp
+  asyncHandler(resendAuthOtp)
 );
 
 router.post(
@@ -130,7 +131,7 @@ router.post(
       .isIn(registerableRoles)
       .withMessage(`Role must be one of: ${registerableRoles.join(", ")}`)
   ],
-  register
+  asyncHandler(register)
 );
 
 router.post(
@@ -141,7 +142,7 @@ router.post(
     body("password").isLength({ min: 1 }).withMessage("Password is required"),
     body("roleHint").optional().trim().toLowerCase().isIn(allowedRoles).withMessage("Invalid roleHint")
   ],
-  login
+  asyncHandler(login)
 );
 
 /**
@@ -160,7 +161,7 @@ router.post(
   "/otp/smtp-ping",
   smtpPingLimiter,
   [body("to").optional({ values: "falsy" }).trim().isEmail().withMessage("Valid email if provided")],
-  smtpPing
+  asyncHandler(smtpPing)
 );
 
 router.post(
@@ -175,16 +176,21 @@ router.post(
       .matches(/^[0-9]+$/)
       .withMessage("Code must be numeric")
   ],
-  verifyRegisterOtp
+  asyncHandler(verifyRegisterOtp)
 );
 
-router.post("/otp/register/resend", otpSendLimiter, [body("email").trim().isEmail().withMessage("Valid email is required")], resendRegisterOtp);
+router.post(
+  "/otp/register/resend",
+  otpSendLimiter,
+  [body("email").trim().isEmail().withMessage("Valid email is required")],
+  asyncHandler(resendRegisterOtp)
+);
 
 router.post(
   "/otp/forgot/send",
   otpSendLimiter,
   [body("email").trim().isEmail().withMessage("Valid email is required")],
-  sendForgotPasswordOtp
+  asyncHandler(sendForgotPasswordOtp)
 );
 
 router.post(
@@ -209,18 +215,18 @@ router.post(
         return true;
       })
   ],
-  resetPasswordWithOtp
+  asyncHandler(resetPasswordWithOtp)
 );
 
-router.get("/profile", protect, profile);
+router.get("/profile", protect, asyncHandler(profile));
 
-router.patch("/active-role", protect, updateActiveRole);
+router.patch("/active-role", protect, asyncHandler(updateActiveRole));
 
 router.post(
   "/add-role",
   protect,
   [body("role").trim().toLowerCase().isIn(registerableRoles).withMessage("Invalid role")],
-  addRoleToAccount
+  asyncHandler(addRoleToAccount)
 );
 
 module.exports = router;

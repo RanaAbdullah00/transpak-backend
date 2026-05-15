@@ -60,8 +60,10 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     : [
         "http://localhost:5173",
         "http://localhost:5174",
+        "http://localhost:5175",
         "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174"
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175"
       ];
   const allowedOriginsList = [...new Set([...defaultLocalOrigins, ...envOrigins])];
   const allowReflectAnyOrigin = !isProd && allowedOriginsList.length === 0;
@@ -110,12 +112,20 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api", (req, res, next) => {
     if (req.path === "/health") return next();
     if (dbState?.ready) return next();
+    const lastErr = dbState?.error;
+    const isProd = process.env.NODE_ENV === "production";
+    if (!isProd && lastErr) {
+      // eslint-disable-next-line no-console
+      console.error("[db] request blocked (DB not ready):", req.method, req.originalUrl, lastErr?.message || lastErr);
+    }
     return res.status(503).json({
       success: false,
-      message: "Database unavailable. Verify DATABASE_URL and run migrations (see Render Shell: npm run db:migrate:otp).",
+      message: "Database unavailable. Set DATABASE_URL on Render (Supabase Session pooler URI) and run: npm run db:migrate:otp",
+      code: "DATABASE_UNAVAILABLE",
       data: {
         databaseUrlConfigured: isDatabaseUrlConfigured(),
-        hint: "transpak-backend: npm run db:migrate:otp"
+        hint: "transpak-backend: npm run db:migrate:otp",
+        ...(isProd ? {} : { lastError: lastErr?.message || String(lastErr || "") })
       }
     });
   });
@@ -141,7 +151,14 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   }
 
   app.use((req, res) => {
-    res.status(404).json({ success: false, message: "Route not found", data: null });
+    // eslint-disable-next-line no-console
+    console.warn("[api] 404", req.method, req.originalUrl);
+    res.status(404).json({
+      success: false,
+      message: "Route not found",
+      code: "NOT_FOUND",
+      data: { method: req.method, path: req.originalUrl }
+    });
   });
 
   app.use((err, req, res, next) => {
