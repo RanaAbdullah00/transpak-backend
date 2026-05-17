@@ -33,7 +33,44 @@ function parseCorsOriginsFromEnv() {
   return raw
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((o) => {
+      try {
+        return new URL(o).origin;
+      } catch {
+        return o.replace(/\/$/, "");
+      }
+    });
+}
+
+/** Cloudflare Pages preview/production hosts (hash changes per deployment). */
+function isCloudflarePagesOrigin(origin) {
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol !== "https:") return false;
+    return hostname.endsWith(".pages.dev") || hostname.endsWith(".cloudflarepages.app");
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedCorsOrigin(origin, allowedOriginsList, isProd) {
+  if (!origin) return true;
+  if (allowedOriginsList.includes(origin)) return true;
+  if (isCloudflarePagesOrigin(origin)) return true;
+  if (!isProd && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return false;
+}
+
+function createCorsOriginCallback(allowedOriginsList, isProd) {
+  return (origin, callback) => {
+    if (isAllowedCorsOrigin(origin, allowedOriginsList, isProd)) {
+      return callback(null, true);
+    }
+    // eslint-disable-next-line no-console
+    console.warn("[cors] blocked origin:", origin || "(none)");
+    return callback(null, false);
+  };
 }
 
 function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
@@ -74,21 +111,28 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     );
   }
 
+  const corsOriginCheck =
+    allowReflectAnyOrigin && !isProd
+      ? (origin, callback) => callback(null, true)
+      : createCorsOriginCallback(allowedOriginsList, isProd);
+
   app.use(
     cors({
-      origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        if (allowReflectAnyOrigin) return callback(null, true);
-        if (allowedOriginsList.length === 0) {
-          if (isProd) return callback(null, false);
-          return callback(null, true);
-        }
-        if (allowedOriginsList.includes(origin)) return callback(null, true);
-        return callback(null, false);
-      },
-      credentials: true
+      origin: corsOriginCheck,
+      credentials: true,
+      methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
     })
   );
+
+  app.get("/", (req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: "transpak-backend",
+      health: "/health",
+      apiHealth: "/api/health"
+    });
+  });
 
   app.get("/health", (req, res) => {
     res.status(200).json({
@@ -169,7 +213,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   });
 
   const socketCorsOrigin =
-    allowReflectAnyOrigin ? true : allowedOriginsList.length === 0 ? (isProd ? [] : true) : allowedOriginsList;
+    allowReflectAnyOrigin && !isProd ? true : createCorsOriginCallback(allowedOriginsList, isProd);
 
   return { app, socketCorsOrigin };
 }
