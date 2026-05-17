@@ -135,6 +135,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       service: "transpak-backend",
       version: APP_VERSION,
       build: BUILD_ID,
+      commit: BUILD_ID,
       uptime: process.uptime(),
       db: dbState?.ready ? "ready" : "unavailable",
       databaseUrlConfigured: isDatabaseUrlConfigured()
@@ -151,6 +152,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         status: "ok",
         version: APP_VERSION,
         build: BUILD_ID,
+        commit: BUILD_ID,
+        uptime: process.uptime(),
         db: dbState?.ready ? "ready" : "unavailable"
       }
     })
