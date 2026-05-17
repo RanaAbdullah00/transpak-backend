@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "nodemon --config nodemon.json",
     "start": "node server.js",
-    "build": "node --check server.js && node --check src/server.js && node --check src/app.js",
+    "build": "node scripts/verify-upload-deps.js && node --check server.js && node --check src/server.js && node --check src/app.js",
     "test": "node --test",
     "seed": "node scripts/seedUsers.js",
     "seed:admin": "node scripts/seedUsers.js",
@@ -28,7 +28,6 @@
     "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
-    "multer-storage-cloudinary": "^4.0.0",
     "pg": "^8.16.3",
     "socket.io": "^4.8.3"
   },

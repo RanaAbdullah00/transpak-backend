@@ -27,7 +27,7 @@ const storage = multer.diskStorage({
 /**
  * Accepts one file, field name "image", writes to ./uploads then handler should
  * call cloudinaryService.uploadImageFile and delete the temp file (see exampleUploadController).
- * Avoids multer-storage-cloudinary (peer conflict with cloudinary@2).
+ * Disk temp file + cloudinaryService.uploadImageFile (cloudinary@2, memory/stream elsewhere).
  */
 const uploadCloudinaryImageSingle = multer({
   storage,

@@ -1,50 +1,39 @@
 const multer = require("multer");
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
-const { cloudinary, ensureConfigured } = require("../config/cloudinary");
+const { IMAGE_MIMES } = require("./upload");
+const { UPLOAD_MEDIA_MAX_BYTES } = require("../config/uploadLimits");
+const { sendError } = require("../utils/apiResponse");
 
-const MAX_BYTES = Number(process.env.UPLOAD_MEDIA_MAX_BYTES || 25 * 1024 * 1024);
-const UPLOAD_FOLDER = String(process.env.CLOUDINARY_MEDIA_FOLDER || "transpak/media").trim();
-
-function createUploadMediaSingle() {
-  ensureConfigured();
-  const storage = new CloudinaryStorage({
-    cloudinary,
-    params: {
-      folder: UPLOAD_FOLDER,
-      resource_type: "auto",
-      use_filename: true,
-      unique_filename: true
-    }
-  });
-  return multer({
-    storage,
-    limits: { fileSize: MAX_BYTES }
-  }).single("file");
+function mediaFileFilter(req, file, cb) {
+  const m = String(file.mimetype || "").toLowerCase();
+  if (IMAGE_MIMES.has(m)) return cb(null, true);
+  const err = new Error("Only JPG, PNG, or WebP images are allowed");
+  err.statusCode = 400;
+  err.code = "INVALID_MIME";
+  cb(err);
 }
 
-const uploadMediaSingle = createUploadMediaSingle();
+/** Memory buffer upload — Cloudinary upload happens in mediaUploadController via upload_stream. */
+const uploadMediaSingle = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: UPLOAD_MEDIA_MAX_BYTES, files: 1 },
+  fileFilter: mediaFileFilter
+}).single("file");
 
 function handleUploadMediaError(err, req, res, next) {
   if (!err) return next();
   if (err.code === "LIMIT_FILE_SIZE") {
-    return res.status(400).json({
-      success: false,
-      message: "File too large",
-      code: "FILE_TOO_LARGE",
-      data: null
-    });
+    return sendError(res, 400, "File too large", null, "FILE_TOO_LARGE");
+  }
+  if (err.code === "INVALID_MIME" || err.statusCode === 400) {
+    return sendError(res, 400, err.message || "Invalid file", null, err.code || "INVALID_MIME");
   }
   // eslint-disable-next-line no-console
   console.error("[upload/media]", err?.message || err);
-  return res.status(503).json({
-    success: false,
-    message: err?.message || "Upload failed",
-    code: "UPLOAD_FAILED",
-    data: null
-  });
+  return sendError(res, 503, err?.message || "Upload failed", null, "UPLOAD_FAILED");
 }
 
 module.exports = {
   uploadMediaSingle,
-  handleUploadMediaError
+  handleUploadMediaError,
+  UPLOAD_MEDIA_MAX_BYTES
 };

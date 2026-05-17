@@ -1,5 +1,7 @@
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { uploadBuffer, destroyByPublicId } = require("../src/services/cloudinaryService");
+const { UPLOAD_IMAGE_MAX_BYTES, UPLOAD_PDF_MAX_BYTES } = require("../config/uploadLimits");
+const { releaseMulterFile, releaseMulterFiles } = require("../utils/uploadMemory");
 
 function userBaseFolder(userId, segment) {
   return `transpak/u/${userId}/${segment}`;
@@ -44,9 +46,9 @@ function pickSingleBuffer(req) {
 }
 
 async function postImage(req, res) {
+  const file = pickImageFromReq(req);
   try {
-    const file = pickImageFromReq(req);
-    if (!file?.buffer) return sendError(res, 400, "file is required (field: file or image)");
+    if (!file?.buffer) return sendError(res, 400, "file is required (field: file or image)", null, "NO_FILE");
     const uid = req.auth.userId;
     const folder = userBaseFolder(uid, "images");
     const out = await uploadBuffer({
@@ -54,7 +56,9 @@ async function postImage(req, res) {
       mimeType: file.mimetype,
       folder,
       resourceType: "image",
-      publicIdPrefix: `img`
+      publicIdPrefix: `img`,
+      maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+      logContext: { userId: uid, route: "POST /api/upload/image" }
     });
     return sendSuccess(
       res,
@@ -64,16 +68,17 @@ async function postImage(req, res) {
     );
   } catch (e) {
     const code = Number(e?.statusCode) || 500;
-    // eslint-disable-next-line no-console
-    console.error("[upload] postImage", { statusCode: code, message: e?.message, stack: e?.stack });
-    return sendError(res, code, e?.message || "Upload failed", null, "UPLOAD_FAILED");
+    return sendError(res, code, e?.message || "Upload failed", null, e?.code || "UPLOAD_FAILED");
+  } finally {
+    releaseMulterFile(file);
+    if (req.files) releaseMulterFiles(req.files);
   }
 }
 
 async function postMultiple(req, res) {
+  const files = Array.isArray(req.files) ? req.files : [];
   try {
-    const files = Array.isArray(req.files) ? req.files : [];
-    if (!files.length) return sendError(res, 400, "files are required (field: files, max 6)");
+    if (!files.length) return sendError(res, 400, "files are required (field: files, max 6)", null, "NO_FILE");
     const uid = req.auth.userId;
     const folder = userBaseFolder(uid, "images");
     const results = [];
@@ -85,24 +90,26 @@ async function postMultiple(req, res) {
         mimeType: file.mimetype,
         folder,
         resourceType: "image",
-        publicIdPrefix: `img`
+        publicIdPrefix: `img`,
+        maxBytes: UPLOAD_IMAGE_MAX_BYTES,
+        logContext: { userId: uid, route: "POST /api/upload/multiple" }
       });
       results.push({ url: out.url, publicId: out.publicId, bytes: out.bytes, format: out.format });
     }
-    if (!results.length) return sendError(res, 400, "No valid files");
+    if (!results.length) return sendError(res, 400, "No valid files", null, "NO_FILE");
     return sendSuccess(res, 201, { items: results }, "Uploaded");
   } catch (e) {
     const code = Number(e?.statusCode) || 500;
-    // eslint-disable-next-line no-console
-    console.error("[upload] postMultiple", { statusCode: code, message: e?.message });
-    return sendError(res, code, e?.message || "Upload failed", null, "UPLOAD_FAILED");
+    return sendError(res, code, e?.message || "Upload failed", null, e?.code || "UPLOAD_FAILED");
+  } finally {
+    releaseMulterFiles(files);
   }
 }
 
 async function postDocument(req, res) {
+  const file = pickSingleBuffer(req);
   try {
-    const file = pickSingleBuffer(req);
-    if (!file?.buffer) return sendError(res, 400, "file is required (field: file)");
+    if (!file?.buffer) return sendError(res, 400, "file is required (field: file)", null, "NO_FILE");
     const uid = req.auth.userId;
     const folder = userBaseFolder(uid, "docs");
     const out = await uploadBuffer({
@@ -110,7 +117,9 @@ async function postDocument(req, res) {
       mimeType: file.mimetype,
       folder,
       resourceType: "raw",
-      publicIdPrefix: `doc`
+      publicIdPrefix: `doc`,
+      maxBytes: UPLOAD_PDF_MAX_BYTES,
+      logContext: { userId: uid, route: "POST /api/upload/document" }
     });
     return sendSuccess(
       res,
@@ -126,9 +135,9 @@ async function postDocument(req, res) {
     );
   } catch (e) {
     const code = Number(e?.statusCode) || 500;
-    // eslint-disable-next-line no-console
-    console.error("[upload] postDocument", { statusCode: code, message: e?.message });
-    return sendError(res, code, e?.message || "Upload failed", null, "UPLOAD_FAILED");
+    return sendError(res, code, e?.message || "Upload failed", null, e?.code || "UPLOAD_FAILED");
+  } finally {
+    releaseMulterFile(file);
   }
 }
 

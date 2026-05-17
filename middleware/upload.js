@@ -1,4 +1,5 @@
 const multer = require("multer");
+const { UPLOAD_IMAGE_MAX_BYTES, UPLOAD_PDF_MAX_BYTES } = require("../config/uploadLimits");
 
 const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PDF_MIMES = new Set(["application/pdf"]);
@@ -19,19 +20,19 @@ const memory = multer.memoryStorage();
 
 const uploadImageSingle = multer({
   storage: memory,
-  limits: { fileSize: Number(process.env.UPLOAD_IMAGE_MAX_BYTES || 5 * 1024 * 1024) },
+  limits: { fileSize: UPLOAD_IMAGE_MAX_BYTES },
   fileFilter: imageFileFilter
 });
 
 const uploadImageMultiple = multer({
   storage: memory,
-  limits: { fileSize: Number(process.env.UPLOAD_IMAGE_MAX_BYTES || 5 * 1024 * 1024) },
+  limits: { fileSize: UPLOAD_IMAGE_MAX_BYTES },
   fileFilter: imageFileFilter
 });
 
 const uploadPdfSingle = multer({
   storage: memory,
-  limits: { fileSize: Number(process.env.UPLOAD_PDF_MAX_BYTES || 10 * 1024 * 1024) },
+  limits: { fileSize: UPLOAD_PDF_MAX_BYTES },
   fileFilter: pdfFileFilter
 });
 
