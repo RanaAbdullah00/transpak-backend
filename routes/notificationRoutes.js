@@ -104,4 +104,9 @@ router.patch(
   }
 );
 
+router.patch("/read-all", protect, async (req, res) => {
+  await query(`UPDATE notifications SET read = true WHERE receiver_id = $1 AND read = false`, [req.auth.userId]);
+  return sendSuccess(res, 200, { ok: true });
+});
+
 module.exports = router;

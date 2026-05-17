@@ -1,9 +1,5 @@
 const { v2: cloudinary } = require("cloudinary");
 
-/**
- * Reads Cloudinary credentials from env (same rules as the rest of the app).
- * Prefer CLOUDINARY_URL in production; split vars are fine for local dev.
- */
 function getCloudinaryConfigFromEnv() {
   const url = String(process.env.CLOUDINARY_URL || "").trim();
   if (url) return { cloudinaryUrl: url };
@@ -12,7 +8,7 @@ function getCloudinaryConfigFromEnv() {
   const apiSecret = String(process.env.CLOUDINARY_API_SECRET || "").trim();
   if (!cloudName || !apiKey || !apiSecret) {
     throw new Error(
-      "Cloudinary config missing. Set CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET."
+      "Cloudinary config missing. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET."
     );
   }
   return { cloudName, apiKey, apiSecret };

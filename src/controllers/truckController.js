@@ -2,6 +2,8 @@ const { body, param, validationResult } = require("express-validator");
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
 const { query } = require("../../db/pool");
 const { safeDestroyReplacedUrl } = require("../../utils/cloudinaryUrl");
+const { isAllowedImageUrl } = require("../../utils/imageUrl");
+const { notifyUser } = require("../../utils/notifyEvent");
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
@@ -29,6 +31,9 @@ const createValidators = [
 async function create(req, res) {
   try {
     const { engineNumber, truckType, capacity, licensePlate, truckCardFrontImage, truckCardBackImage } = req.body || {};
+    if (!isAllowedImageUrl(truckCardFrontImage) || !isAllowedImageUrl(truckCardBackImage)) {
+      return sendError(res, 400, "Truck images must be HTTPS URLs (upload via /api/upload/media first)");
+    }
     const { rows } = await query(
       `INSERT INTO trucks (user_id, engine_number, truck_type, capacity, license_plate, truck_card_front_image, truck_card_back_image)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -45,6 +50,13 @@ async function create(req, res) {
         String(truckCardBackImage).trim()
       ]
     );
+    await notifyUser({
+      receiverId: req.auth.userId,
+      senderId: req.auth.userId,
+      roleType: "carrier",
+      title: "TRUCK_UPDATED",
+      message: "Truck added to your fleet"
+    });
     return sendSuccess(res, 201, rows[0], "Created");
   } catch (err) {
     // unique violation -> conflict
@@ -93,6 +105,12 @@ async function update(req, res) {
     if (!isAdmin && String(truck.user_id) !== String(req.auth.userId)) return sendError(res, 403, "Forbidden");
 
     const { engineNumber, truckType, capacity, licensePlate, truckCardFrontImage, truckCardBackImage } = req.body || {};
+    if (truckCardFrontImage != null && !isAllowedImageUrl(truckCardFrontImage)) {
+      return sendError(res, 400, "Invalid truckCardFrontImage URL");
+    }
+    if (truckCardBackImage != null && !isAllowedImageUrl(truckCardBackImage)) {
+      return sendError(res, 400, "Invalid truckCardBackImage URL");
+    }
     const uidStr = String(req.auth.userId);
     const { rows } = await query(
       `UPDATE trucks
@@ -127,6 +145,15 @@ async function update(req, res) {
       if (truckCardBackImage != null && truck.truck_card_back_image && truck.truck_card_back_image !== updated.truckCardBackImage) {
         void safeDestroyReplacedUrl(uidStr, truck.truck_card_back_image, updated.truckCardBackImage, "image");
       }
+    }
+    if (updated) {
+      await notifyUser({
+        receiverId: req.auth.userId,
+        senderId: req.auth.userId,
+        roleType: "carrier",
+        title: "TRUCK_UPDATED",
+        message: "Truck details saved"
+      });
     }
     return sendSuccess(res, 200, updated);
   } catch (err) {

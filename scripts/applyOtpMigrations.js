@@ -8,7 +8,16 @@ require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const fs = require("fs");
 const { getPool, endPool, isDatabaseUrlConfigured } = require("../db/pool");
 
-const FILES = ["004_email_otp_challenges.sql", "005_auth_otp_codes.sql", "006_pending_registrations.sql"];
+const FILES = [
+  "004_email_otp_challenges.sql",
+  "005_auth_otp_codes.sql",
+  "006_pending_registrations.sql",
+  "007_load_fare_fields.sql",
+  "008_carrier_space_listings.sql",
+  "009_carrier_space_requests.sql",
+  "010_space_request_lifecycle.sql",
+  "011_ratings_space_request.sql"
+];
 
 async function main() {
   if (!isDatabaseUrlConfigured()) {

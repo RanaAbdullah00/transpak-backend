@@ -3,6 +3,7 @@ const { body } = require("express-validator");
 const { protect } = require("../middleware/authMiddleware");
 const { uploadProfileImages } = require("../middleware/uploadProfileImages");
 const { getProfile, updateProfile, getProfileStatus, getActivitySnapshot } = require("../controllers/profileController");
+const { getPublicProfile } = require("../controllers/publicProfileController");
 const { sendError } = require("../utils/apiResponse");
 
 const router = express.Router();
@@ -21,6 +22,7 @@ function handleProfileUpload(req, res, next) {
 router.get("/", protect, getProfile);
 router.get("/status", protect, getProfileStatus);
 router.get("/activity-snapshot", protect, getActivitySnapshot);
+router.get("/:id", protect, getPublicProfile);
 
 router.put(
   "/update",

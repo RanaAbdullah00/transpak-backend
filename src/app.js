@@ -70,7 +70,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       crossOriginResourcePolicy: { policy: "cross-origin" }
     })
   );
-  app.use(express.json({ limit: "10kb" }));
+  const jsonLimit = process.env.JSON_BODY_LIMIT || "5mb";
+  app.use(express.json({ limit: jsonLimit }));
   app.use(express.urlencoded({ extended: false }));
 
   if (uploadsDir) {
@@ -166,8 +167,13 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api/shipments", shipmentRoutes);
   app.use("/api/loads", loadRoutes);
   app.use("/api/bids", bidRoutes);
+  app.use("/api/fare", require("../routes/fareRoutes"));
+  app.use("/api/carrier-space", require("../routes/carrierSpaceRoutes"));
+  app.use("/api/carrier-space", require("../routes/spaceBookingRoutes"));
+  app.use("/api/operations", require("../routes/operationsRoutes"));
   app.use("/api/admin", adminRoutes);
   app.use("/api/reviews", reviewRoutes);
+  app.use("/api/ratings", reviewRoutes);
   app.use("/api/notifications", notificationRoutes);
   app.use("/api/chat", chatRoutes);
   app.use("/api/trucks", truckRoutes);

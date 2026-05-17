@@ -3,16 +3,30 @@ const loadRepo = require("../repositories/loadRepo");
 
 async function listOpen(req, res) {
   try {
-    const { origin, destination, vehicleType, city, minPrice, maxPrice } = req.query || {};
-    const minRaw = minPrice !== undefined && String(minPrice).trim() !== "" ? String(minPrice).trim() : "";
-    const maxRaw = maxPrice !== undefined && String(maxPrice).trim() !== "" ? String(maxPrice).trim() : "";
+    const q = req.query || {};
+    const minRaw = q.minPrice !== undefined && String(q.minPrice).trim() !== "" ? String(q.minPrice).trim() : "";
+    const maxRaw = q.maxPrice !== undefined && String(q.maxPrice).trim() !== "" ? String(q.maxPrice).trim() : "";
     if (minRaw && !Number.isFinite(Number(minRaw))) return sendError(res, 400, "minPrice must be a valid number");
     if (maxRaw && !Number.isFinite(Number(maxRaw))) return sendError(res, 400, "maxPrice must be a valid number");
     const minN = minRaw ? Number(minRaw) : null;
     const maxN = maxRaw ? Number(maxRaw) : null;
     if (minN != null && maxN != null && minN > maxN) return sendError(res, 400, "minPrice cannot exceed maxPrice");
 
-    const loads = await loadRepo.listOpenLoads({ origin, destination, vehicleType, city, minPrice: minN, maxPrice: maxN });
+    const loads = await loadRepo.listOpenLoads({
+      origin: q.origin,
+      destination: q.destination,
+      vehicleType: q.vehicleType,
+      city: q.city,
+      minPrice: minN,
+      maxPrice: maxN,
+      minWeight: q.minWeight,
+      maxWeight: q.maxWeight,
+      pickupFrom: q.pickupFrom,
+      pickupTo: q.pickupTo,
+      sort: q.sort || "newest",
+      limit: q.limit,
+      offset: q.offset
+    });
     return sendSuccess(res, 200, loads);
   } catch (err) {
     return sendError(res, 500, err.message || "Server error");
@@ -20,4 +34,3 @@ async function listOpen(req, res) {
 }
 
 module.exports = { listOpen };
-

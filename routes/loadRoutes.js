@@ -5,6 +5,8 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
 const loadController = require("../src/controllers/loadController");
+const { estimateDistanceKm, calculateSuggestedFare } = require("../utils/loadFare");
+const { apiLoadStatus } = require("../utils/bidStateMachine");
 
 const router = express.Router();
 
@@ -222,8 +224,26 @@ async function createLoad(req, res) {
   if (!user.isProfileComplete) {
     return sendError(res, 403, "Complete your profile to post loads");
   }
-  const { cargo, origin, destination, weight, type, vehicleType, price, expectedPrice, pickupDate, deadlineHours } =
-    req.body || {};
+  const {
+    cargo,
+    origin,
+    destination,
+    weight,
+    type,
+    vehicleType,
+    price,
+    expectedPrice,
+    pickupDate,
+    deadlineHours,
+    distanceKm
+  } = req.body || {};
+
+  const pickupLoc = String(origin || "").trim();
+  const dropLoc = String(destination || "").trim();
+  const distKm = estimateDistanceKm(pickupLoc, dropLoc, distanceKm);
+  const vType = String(vehicleType || type || "Truck").trim();
+  const suggestedFare = calculateSuggestedFare(distKm, vType);
+  const resolvedPrice = Number(expectedPrice ?? price ?? suggestedFare ?? 0);
 
   const pickup = String(pickupDate || "").trim();
   if (!isISODateOnly(pickup)) return sendError(res, 400, "pickupDate must be YYYY-MM-DD");
@@ -237,27 +257,34 @@ async function createLoad(req, res) {
   const code = generateCode();
   const { rows } = await query(
     `INSERT INTO loads
-       (code, shipper_id, cargo, origin, destination, weight, vehicle_type, expected_price, pickup_date, deadline_hours, status)
+       (code, shipper_id, cargo, origin, destination, weight, vehicle_type, expected_price, pickup_date, deadline_hours, status,
+        distance_km, suggested_fare, pickup_location, drop_location)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, 'open')
+       ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, 'open', $11, $12, $13, $14)
      RETURNING id, code, cargo, origin, destination, weight, vehicle_type AS "vehicleType",
                expected_price AS "expectedPrice", pickup_date AS "pickupDate", deadline_hours AS "deadlineHours",
                status, shipper_id AS "shipperId", assigned_carrier_id AS "assignedCarrierId",
+               distance_km AS "distanceKm", suggested_fare AS "suggestedFare",
+               pickup_location AS "pickupLocation", drop_location AS "dropLocation",
                created_at AS "createdAt", updated_at AS "updatedAt"`,
     [
       code,
       req.auth.userId,
       String(cargo || "Load").trim(),
-      String(origin || "").trim(),
-      String(destination || "").trim(),
+      pickupLoc,
+      dropLoc,
       Number(weight || 0),
-      String(vehicleType || type || "Truck").trim(),
-      Number(expectedPrice ?? price ?? 0),
+      vType,
+      resolvedPrice,
       pickup,
-      Number(deadlineHours || 2)
+      Number(deadlineHours || 2),
+      distKm,
+      suggestedFare,
+      pickupLoc,
+      dropLoc
     ]
   );
-  const load = rows[0];
+  const load = { ...rows[0], flowStatus: apiLoadStatus(rows[0].status) };
   // ensure shipment row exists for tracking lifecycle
   await query(
     `INSERT INTO shipments (load_id, status, location_unavailable)
@@ -293,7 +320,12 @@ const createLoadValidators = [
     .optional({ nullable: true })
     .toInt()
     .isInt({ min: 1, max: 72 })
-    .withMessage("deadlineHours must be 1-72")
+    .withMessage("deadlineHours must be 1-72"),
+  body("distanceKm")
+    .optional({ nullable: true })
+    .toFloat()
+    .isFloat({ min: 0 })
+    .withMessage("distanceKm must be non-negative")
 ];
 
 router.post("/", protect, requireAnyRole(["shipper", "admin"]), requireActiveRole("shipper"), createLoadValidators, validate, createLoad);

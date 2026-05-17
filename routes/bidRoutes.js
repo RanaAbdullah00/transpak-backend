@@ -3,6 +3,8 @@ const { body, param, validationResult } = require("express-validator");
 const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { getPool, query } = require("../db/pool");
+const { assertBidTransition, apiBidStatus, BID } = require("../utils/bidStateMachine");
+const { notifyUser } = require("../utils/notifyEvent");
 
 const router = express.Router();
 
@@ -127,6 +129,7 @@ router.post(
   ],
   validate,
   async (req, res) => {
+    try {
     const { loadId, amount } = req.body || {};
     const { rows: loadRows } = await query(
       `SELECT id, status, deadline_hours
@@ -137,6 +140,12 @@ router.post(
     const load = loadRows[0];
     if (!load) return sendError(res, 404, "Not found");
     if (load.status !== "open") return sendError(res, 409, "Load is not open for bidding");
+
+    const { rows: existing } = await query(
+      `SELECT id, status FROM bids WHERE load_id = $1 AND carrier_id = $2`,
+      [loadId, req.auth.userId]
+    );
+    if (existing[0]) assertBidTransition(existing[0].status, BID.PENDING);
 
     const { rows } = await query(
       `INSERT INTO bids (load_id, carrier_id, amount, status)
@@ -149,7 +158,25 @@ router.post(
       [loadId, req.auth.userId, Number(amount)]
     );
 
-    return sendSuccess(res, 201, rows[0], "Created");
+    const { rows: loadOwner } = await query(`SELECT shipper_id FROM loads WHERE id = $1`, [loadId]);
+    if (loadOwner[0]?.shipper_id) {
+      await notifyUser({
+        receiverId: loadOwner[0].shipper_id,
+        senderId: req.auth.userId,
+        roleType: "carrier",
+        title: "BID_RECEIVED",
+        message: `New bid of PKR ${Number(amount)} on your load`
+      });
+    }
+
+    const bid = { ...rows[0], flowStatus: apiBidStatus(rows[0].status) };
+    return sendSuccess(res, 201, bid, "Created");
+    } catch (err) {
+      if (err.code === "INVALID_BID_TRANSITION" || err.code === "INVALID_BID_STATE") {
+        return sendError(res, err.statusCode || 409, err.message, { code: err.code });
+      }
+      return sendError(res, 500, err.message || "Server error");
+    }
   }
 );
 
@@ -173,8 +200,9 @@ router.put(
     if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
       return sendError(res, 403, "Forbidden");
     }
+    assertBidTransition(bid.status, BID.REJECTED);
     await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
-    return sendSuccess(res, 200, { ok: true }, "Rejected");
+    return sendSuccess(res, 200, { ok: true, flowStatus: "REJECTED" }, "Rejected");
   }
 );
 
@@ -192,7 +220,7 @@ router.put(
     const bidId = req.params.id;
     const amount = Number(req.body.amount);
     const { rows: bidRows } = await query(
-      `SELECT b.id, b.load_id, l.shipper_id
+      `SELECT b.id, b.load_id, b.status, b.carrier_id, l.shipper_id
        FROM bids b JOIN loads l ON l.id = b.load_id
        WHERE b.id = $1`,
       [bidId]
@@ -202,13 +230,21 @@ router.put(
     if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
       return sendError(res, 403, "Forbidden");
     }
+    assertBidTransition(bid.status, BID.COUNTERED);
     await query(
       `UPDATE bids
        SET status = 'suggested', suggested_amount = $2, suggested_by = 'shipper', updated_at = now()
        WHERE id = $1`,
       [bidId, amount]
     );
-    return sendSuccess(res, 200, { ok: true }, "Suggested");
+    await notifyUser({
+      receiverId: bid.carrier_id,
+      senderId: req.auth.userId,
+      roleType: "shipper",
+      title: "COUNTER_OFFER",
+      message: `Shipper counter offer: PKR ${amount}`
+    });
+    return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTERED" }, "Suggested");
   }
 );
 
@@ -225,19 +261,32 @@ router.put(
   async (req, res) => {
     const bidId = req.params.id;
     const amount = Number(req.body.amount);
-    const { rows: bidRows } = await query(`SELECT id, carrier_id FROM bids WHERE id = $1`, [bidId]);
+    const { rows: bidRows } = await query(
+      `SELECT b.id, b.carrier_id, b.status, l.shipper_id
+       FROM bids b JOIN loads l ON l.id = b.load_id
+       WHERE b.id = $1`,
+      [bidId]
+    );
     const bid = bidRows[0];
     if (!bid) return sendError(res, 404, "Not found");
     if (String(bid.carrier_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
       return sendError(res, 403, "Forbidden");
     }
+    assertBidTransition(bid.status, BID.COUNTERED);
     await query(
       `UPDATE bids
        SET status = 'suggested', suggested_amount = $2, suggested_by = 'carrier', updated_at = now()
        WHERE id = $1`,
       [bidId, amount]
     );
-    return sendSuccess(res, 200, { ok: true }, "Suggested");
+    await notifyUser({
+      receiverId: bid.shipper_id,
+      senderId: req.auth.userId,
+      roleType: "carrier",
+      title: "COUNTER_OFFER",
+      message: `Carrier counter offer: PKR ${amount}`
+    });
+    return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTERED" }, "Suggested");
   }
 );
 
@@ -320,6 +369,7 @@ router.put(
         await client.query("ROLLBACK");
         return sendError(res, 409, "Bid is not actionable");
       }
+      assertBidTransition(bid.status, BID.ACCEPTED);
       if (bid.status === "suggested" && bid.suggested_by === "shipper") {
         await client.query("ROLLBACK");
         return sendError(res, 409, "Awaiting carrier response to your offer");
@@ -394,12 +444,31 @@ router.put(
       );
 
       await client.query("COMMIT");
-      return sendSuccess(res, 200, { ok: true, bookingId }, "Accepted");
+
+      await notifyUser({
+        receiverId: bid.carrier_id,
+        senderId: bid.shipper_id,
+        roleType: "shipper",
+        title: "BID_ACCEPTED",
+        message: "Your bid was accepted. Contract is active."
+      });
+      await notifyUser({
+        receiverId: bid.shipper_id,
+        senderId: bid.carrier_id,
+        roleType: "carrier",
+        title: "CONTRACT_STARTED",
+        message: "Load booked. You can now contact the shipper."
+      });
+
+      return sendSuccess(res, 200, { ok: true, bookingId, flowStatus: "ACCEPTED", loadFlowStatus: "ACTIVE" }, "Accepted");
     } catch (err) {
       try {
         await client.query("ROLLBACK");
       } catch {
         // ignore
+      }
+      if (err.code === "INVALID_BID_TRANSITION" || err.code === "INVALID_BID_STATE") {
+        return sendError(res, err.statusCode || 409, err.message, { code: err.code });
       }
       return sendError(res, 500, err.message || "Server error");
     } finally {
