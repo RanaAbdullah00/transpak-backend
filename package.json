@@ -14,7 +14,8 @@
     "seed": "node scripts/seedUsers.js",
     "seed:admin": "node scripts/seedUsers.js",
     "db:migrate:otp": "node scripts/applyOtpMigrations.js",
-    "dev:reset-test-auth": "node scripts/devResetTestAuth.js"
+    "dev:reset-test-auth": "node scripts/devResetTestAuth.js",
+    "deploy:check": "node ../scripts/check-production-sync.mjs"
   },
   "dependencies": {
     "axios": "^1.16.1",

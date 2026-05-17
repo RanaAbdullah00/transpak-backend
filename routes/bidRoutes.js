@@ -3,7 +3,7 @@ const { body, param, validationResult } = require("express-validator");
 const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { getPool, query } = require("../db/pool");
-const { assertBidTransition, apiBidStatus, BID } = require("../utils/bidStateMachine");
+const { assertBidTransition, apiBidStatus, BID, normalizeBidStatus } = require("../utils/bidStateMachine");
 const { notifyUser } = require("../utils/notifyEvent");
 
 const router = express.Router();
@@ -138,14 +138,27 @@ router.post(
       [loadId]
     );
     const load = loadRows[0];
-    if (!load) return sendError(res, 404, "Not found");
-    if (load.status !== "open") return sendError(res, 409, "Load is not open for bidding");
+    if (!load) return sendError(res, 404, "Not found", null, "NOT_FOUND");
+    if (load.status !== "open") return sendError(res, 409, "Load is not open for bidding", null, "LOAD_NOT_OPEN");
 
     const { rows: existing } = await query(
-      `SELECT id, status FROM bids WHERE load_id = $1 AND carrier_id = $2`,
+      `SELECT id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,
+              suggested_amount AS "suggestedAmount", suggested_by AS "suggestedBy",
+              created_at AS "createdAt"
+       FROM bids WHERE load_id = $1 AND carrier_id = $2`,
       [loadId, req.auth.userId]
     );
-    if (existing[0]) assertBidTransition(existing[0].status, BID.PENDING);
+    if (existing[0]) {
+      const st = normalizeBidStatus(existing[0].status);
+      if (st === BID.ACCEPTED) {
+        return sendError(res, 409, "This load already has an accepted carrier", null, "BID_ALREADY_ACCEPTED");
+      }
+      if (st === BID.PENDING && Number(existing[0].amount) === Number(amount)) {
+        const bid = { ...existing[0], flowStatus: apiBidStatus(existing[0].status) };
+        return sendSuccess(res, 200, bid, "Already submitted");
+      }
+      assertBidTransition(existing[0].status, BID.PENDING);
+    }
 
     const { rows } = await query(
       `INSERT INTO bids (load_id, carrier_id, amount, status)
@@ -173,9 +186,9 @@ router.post(
     return sendSuccess(res, 201, bid, "Created");
     } catch (err) {
       if (err.code === "INVALID_BID_TRANSITION" || err.code === "INVALID_BID_STATE") {
-        return sendError(res, err.statusCode || 409, err.message, { code: err.code });
+        return sendError(res, err.statusCode || 409, err.message, null, err.code);
       }
-      return sendError(res, 500, err.message || "Server error");
+      return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
     }
   }
 );
@@ -262,15 +275,26 @@ router.put(
     const bidId = req.params.id;
     const amount = Number(req.body.amount);
     const { rows: bidRows } = await query(
-      `SELECT b.id, b.carrier_id, b.status, l.shipper_id
+      `SELECT b.id, b.carrier_id, b.status, b.suggested_amount, b.suggested_by, l.shipper_id
        FROM bids b JOIN loads l ON l.id = b.load_id
        WHERE b.id = $1`,
       [bidId]
     );
     const bid = bidRows[0];
-    if (!bid) return sendError(res, 404, "Not found");
+    if (!bid) return sendError(res, 404, "Not found", null, "NOT_FOUND");
     if (String(bid.carrier_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
-      return sendError(res, 403, "Forbidden");
+      return sendError(res, 403, "Forbidden", null, "FORBIDDEN");
+    }
+    const st = normalizeBidStatus(bid.status);
+    if (st === BID.ACCEPTED) {
+      return sendError(res, 409, "Bid is already accepted", null, "BID_ALREADY_ACCEPTED");
+    }
+    if (
+      st === BID.COUNTERED &&
+      bid.suggested_by === "carrier" &&
+      Number(bid.suggested_amount) === Number(amount)
+    ) {
+      return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTERED" }, "Already suggested");
     }
     assertBidTransition(bid.status, BID.COUNTERED);
     await query(
@@ -365,9 +389,13 @@ router.put(
         await client.query("ROLLBACK");
         return sendError(res, 404, "Not found");
       }
-      if (bid.status === "rejected" || bid.status === "accepted") {
+      if (bid.status === "accepted") {
         await client.query("ROLLBACK");
-        return sendError(res, 409, "Bid is not actionable");
+        return sendSuccess(res, 200, { id: bid.id, flowStatus: "ACCEPTED" }, "Already accepted");
+      }
+      if (bid.status === "rejected") {
+        await client.query("ROLLBACK");
+        return sendError(res, 409, "Bid is not actionable", null, "BID_NOT_ACTIONABLE");
       }
       assertBidTransition(bid.status, BID.ACCEPTED);
       if (bid.status === "suggested" && bid.suggested_by === "shipper") {

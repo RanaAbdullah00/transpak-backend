@@ -48,7 +48,7 @@ function requireRole(role) {
   return (req, res, next) => {
     const roles = req.auth?.roles || req.user?.roles || [];
     if (!roles.includes(role)) {
-      return sendError(res, 403, "Forbidden");
+      return sendError(res, 403, "Forbidden", null, "FORBIDDEN_ROLE");
     }
     return next();
   };
@@ -59,7 +59,7 @@ function requireAnyRole(rolesList) {
   return (req, res, next) => {
     const roles = req.auth?.roles || req.user?.roles || [];
     if (!required.some((r) => roles.includes(r))) {
-      return sendError(res, 403, "Forbidden");
+      return sendError(res, 403, "Forbidden", null, "FORBIDDEN_ROLE");
     }
     return next();
   };
@@ -72,7 +72,7 @@ function requireActiveRole(...allowed) {
     if (roles.includes("admin")) return next();
     const active = req.auth?.activeRole;
     if (list.includes(active)) return next();
-    return sendError(res, 403, "Switch role to continue");
+    return sendError(res, 403, "Switch role to continue", null, "WRONG_ACTIVE_ROLE");
   };
 }
 

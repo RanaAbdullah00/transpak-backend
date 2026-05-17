@@ -12,9 +12,13 @@ function isUuid(value) {
 function validate(req, res, next) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return sendError(res, 400, errors.array()[0]?.msg || "Validation error", {
-      fields: errors.array().map((e) => e.path)
-    });
+    return sendError(
+      res,
+      400,
+      errors.array()[0]?.msg || "Validation error",
+      { fields: errors.array().map((e) => e.path) },
+      "VALIDATION_ERROR"
+    );
   }
   return next();
 }
@@ -31,8 +35,22 @@ const createValidators = [
 async function create(req, res) {
   try {
     const { engineNumber, truckType, capacity, licensePlate, truckCardFrontImage, truckCardBackImage } = req.body || {};
+    console.info("[trucks.create]", {
+        userId: req.auth?.userId,
+        engineNumber: String(engineNumber || "").slice(0, 24),
+        truckType,
+        capacity,
+        hasFront: Boolean(truckCardFrontImage),
+        hasBack: Boolean(truckCardBackImage)
+    });
     if (!isAllowedImageUrl(truckCardFrontImage) || !isAllowedImageUrl(truckCardBackImage)) {
-      return sendError(res, 400, "Truck images must be HTTPS URLs (upload via /api/upload/media first)");
+      return sendError(
+        res,
+        400,
+        "Truck images must be secure HTTPS URLs (upload via /api/upload/media first)",
+        null,
+        "INVALID_IMAGE_URL"
+      );
     }
     const { rows } = await query(
       `INSERT INTO trucks (user_id, engine_number, truck_type, capacity, license_plate, truck_card_front_image, truck_card_back_image)
@@ -60,8 +78,8 @@ async function create(req, res) {
     return sendSuccess(res, 201, rows[0], "Created");
   } catch (err) {
     // unique violation -> conflict
-    if (String(err.code) === "23505") return sendError(res, 409, "Truck already exists");
-    return sendError(res, 500, err.message || "Server error");
+    if (String(err.code) === "23505") return sendError(res, 409, "Truck already exists", null, "TRUCK_EXISTS");
+    return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
   }
 }
 
@@ -106,10 +124,10 @@ async function update(req, res) {
 
     const { engineNumber, truckType, capacity, licensePlate, truckCardFrontImage, truckCardBackImage } = req.body || {};
     if (truckCardFrontImage != null && !isAllowedImageUrl(truckCardFrontImage)) {
-      return sendError(res, 400, "Invalid truckCardFrontImage URL");
+      return sendError(res, 400, "Invalid truckCardFrontImage URL", null, "INVALID_IMAGE_URL");
     }
     if (truckCardBackImage != null && !isAllowedImageUrl(truckCardBackImage)) {
-      return sendError(res, 400, "Invalid truckCardBackImage URL");
+      return sendError(res, 400, "Invalid truckCardBackImage URL", null, "INVALID_IMAGE_URL");
     }
     const uidStr = String(req.auth.userId);
     const { rows } = await query(
@@ -157,8 +175,8 @@ async function update(req, res) {
     }
     return sendSuccess(res, 200, updated);
   } catch (err) {
-    if (String(err.code) === "23505") return sendError(res, 409, "Truck already exists");
-    return sendError(res, 500, err.message || "Server error");
+    if (String(err.code) === "23505") return sendError(res, 409, "Truck already exists", null, "TRUCK_EXISTS");
+    return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
   }
 }
 

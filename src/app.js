@@ -1,10 +1,15 @@
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 
+const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
+const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
+
 const { isDatabaseUrlConfigured } = require("../db/pool");
 
 const { globalApiLimiter } = require("../middleware/apiRateLimit");
+const { deployHeaders } = require("../middleware/deployHeaders");
 const { globalErrorMiddleware } = require("../utils/globalErrorHandler");
 
 const authRoutes = require("../routes/authRoutes");
@@ -64,6 +69,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   const app = express();
 
   app.set("trust proxy", 1);
+  app.use(deployHeaders);
 
   app.use(
     helmet({
@@ -109,7 +115,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       origin: corsOriginCheck,
       credentials: true,
       methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
+      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+      exposedHeaders: ["X-TransPak-Version", "X-TransPak-Build"]
     })
   );
 
@@ -125,6 +132,9 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.get("/health", (req, res) => {
     res.status(200).json({
       ok: true,
+      service: "transpak-backend",
+      version: APP_VERSION,
+      build: BUILD_ID,
       uptime: process.uptime(),
       db: dbState?.ready ? "ready" : "unavailable",
       databaseUrlConfigured: isDatabaseUrlConfigured()
@@ -137,7 +147,12 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     res.json({
       success: true,
       message: "ok",
-      data: { status: "ok", db: dbState?.ready ? "ready" : "unavailable" }
+      data: {
+        status: "ok",
+        version: APP_VERSION,
+        build: BUILD_ID,
+        db: dbState?.ready ? "ready" : "unavailable"
+      }
     })
   );
 

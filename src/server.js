@@ -12,6 +12,9 @@ const registerSocketHandlers = require("../sockets");
 const { createApp } = require("./app");
 const { registerProcessSafetyHandlers } = require("../utils/globalErrorHandler");
 
+const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
+const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
+
 registerProcessSafetyHandlers();
 
 const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
@@ -287,7 +290,9 @@ async function start() {
         email: mailLabel,
         DB: dbState.ready ? "ready" : "connecting"
       });
-      console.log(`TransPak backend (HTTP + Socket.io) on port ${listenAttemptPort}`);
+      console.log(
+        `TransPak backend running - version ${APP_VERSION} - build ${BUILD_ID} - build OK - port ${listenAttemptPort}`
+      );
 
       if (String(process.env.BREVO_VERIFY_ON_START || "").toLowerCase() === "true") {
         verifyBrevoApi().catch((e) => {

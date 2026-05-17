@@ -1,0 +1,12 @@
+const path = require("path");
+const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
+const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
+
+/** Attach build metadata on every response so clients can detect stale deploys. */
+function deployHeaders(req, res, next) {
+  res.setHeader("X-TransPak-Version", APP_VERSION);
+  res.setHeader("X-TransPak-Build", BUILD_ID);
+  next();
+}
+
+module.exports = { deployHeaders, APP_VERSION, BUILD_ID };
