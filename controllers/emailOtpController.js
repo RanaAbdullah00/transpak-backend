@@ -10,6 +10,7 @@ const pendingRegistrationRepo = require("../repositories/pendingRegistrationRepo
 const { sendOtpEmail, sendMail, smtpConfigured, validateOutboundMailConfig, classifySmtpSendError } = require("../services/emailService");
 const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
 const devAuthTestState = require("../services/devAuthTestState");
+const { buildOtpDeliveryData, errorCodeForFailure, statusForErrorCode } = require("../utils/otpDelivery");
 
 const { PURPOSES } = emailOtpRepo;
 
@@ -43,24 +44,18 @@ function generateSixDigitCode() {
   return String(crypto.randomInt(100000, 1000000));
 }
 
-/** Human-readable hint for clients when outbound mail did not send (English; UI may map by deliveryReason). */
-function otpDeliveryHint(reason) {
-  switch (reason) {
-    case "smtp_not_configured":
-      return "Email was not sent: Brevo API is not configured (set BREVO_API_KEY).";
-    case "mail_from_missing":
-      return "Email was not sent: set BREVO_SENDER_EMAIL to a verified Brevo sender address.";
-    case "authentication_failed":
-      return "Email was not sent: Brevo API key is invalid. Use the REST API key (xkeysib-…) from Brevo → SMTP & API.";
-    case "sender_not_verified":
-      return "Email was not sent: the sender is not verified in Brevo (Senders & IP). BREVO_SENDER_EMAIL must match.";
-    case "rate_limited":
-      return "Email was not sent: Brevo rate-limited this request. Wait and retry.";
-    case "send_failed":
-      return "Email was not sent. Check Brevo transactional logs for this submission.";
-    default:
-      return "Email was not sent. Please try again or contact support.";
-  }
+function buildResendOtpPayload(delivery, devOtp) {
+  const outbound = validateOutboundMailConfig();
+  return buildOtpDeliveryData({
+    delivered: Boolean(delivery?.delivered),
+    reason: delivery?.reason || null,
+    devOtp: devOtp || null,
+    context: "register",
+    extra: {
+      smtpConfigured: smtpConfigured(),
+      mailOutboundReady: outbound.ok
+    }
+  });
 }
 
 async function tryDeliverOtp(email, purpose, plainCode) {
@@ -123,27 +118,36 @@ async function tryDeliverOtp(email, purpose, plainCode) {
  * @returns {Promise<{ devOtp: string|null, delivery: object }>}
  */
 async function issueRegisterOtpForNewUser(email) {
-  const normalized = String(email || "").trim().toLowerCase();
-  if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalized)) {
-    await devAuthTestState.clearOtpTablesForEmail(normalized);
+  try {
+    const normalized = String(email || "").trim().toLowerCase();
+    if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalized)) {
+      await devAuthTestState.clearOtpTablesForEmail(normalized);
+    }
+    const plain = generateSixDigitCode();
+    const codeHash = await bcrypt.hash(plain, 8);
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+    await emailOtpRepo.invalidateOpen(normalized, PURPOSES.REGISTER);
+    await emailOtpRepo.insertChallenge({
+      email: normalized,
+      purpose: PURPOSES.REGISTER,
+      codeHash,
+      expiresAt
+    });
+    const delivery = await tryDeliverOtp(normalized, PURPOSES.REGISTER, plain);
+    const devReturn =
+      process.env.NODE_ENV !== "production" && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
+    return {
+      delivery,
+      devOtp: devReturn ? plain : null
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[emailOtp] issueRegisterOtpForNewUser failed:", err?.message || err);
+    return {
+      delivery: { delivered: false, reason: "exception" },
+      devOtp: null
+    };
   }
-  const plain = generateSixDigitCode();
-  const codeHash = await bcrypt.hash(plain, 8);
-  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
-  await emailOtpRepo.invalidateOpen(normalized, PURPOSES.REGISTER);
-  await emailOtpRepo.insertChallenge({
-    email: normalized,
-    purpose: PURPOSES.REGISTER,
-    codeHash,
-    expiresAt
-  });
-  const delivery = await tryDeliverOtp(normalized, PURPOSES.REGISTER, plain);
-  const devReturn =
-    process.env.NODE_ENV !== "production" && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
-  return {
-    delivery,
-    devOtp: devReturn ? plain : null
-  };
 }
 
 /**
@@ -151,36 +155,45 @@ async function issueRegisterOtpForNewUser(email) {
  * Overwrites any previous pending row for the same email (new code, attempts reset).
  */
 async function upsertPendingRegistrationAndSendOtp({ email, phone, cnicNumber, fullName, passwordHash, role }) {
-  const normalized = String(email || "").trim().toLowerCase();
-  /*
-   * DEV_MODE + DEV_AUTH_TEST_EMAILS: wipe pending + OTP rows for this email before each new
-   * signup OTP so the same address can be exercised repeatedly without duplicate / stale rows.
-   * Production: no-op (isDevAuthRelaxEnabled is false).
-   */
-  if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalized)) {
-    await devAuthTestState.clearOtpAndPendingForEmail(normalized);
+  try {
+    const normalized = String(email || "").trim().toLowerCase();
+    /*
+     * DEV_MODE + DEV_AUTH_TEST_EMAILS: wipe pending + OTP rows for this email before each new
+     * signup OTP so the same address can be exercised repeatedly without duplicate / stale rows.
+     * Production: no-op (isDevAuthRelaxEnabled is false).
+     */
+    if (isDevAuthRelaxEnabled() && isAllowlistedDevTestEmail(normalized)) {
+      await devAuthTestState.clearOtpAndPendingForEmail(normalized);
+    }
+    const plain = generateSixDigitCode();
+    const codeHash = await bcrypt.hash(plain, 8);
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+    await emailOtpRepo.invalidateOpen(normalized, PURPOSES.REGISTER);
+    await pendingRegistrationRepo.upsert({
+      email: normalized,
+      phone,
+      cnicNumber,
+      fullName,
+      passwordHash,
+      role,
+      codeHash,
+      expiresAt
+    });
+    const delivery = await tryDeliverOtp(normalized, PURPOSES.REGISTER, plain);
+    const devReturn =
+      process.env.NODE_ENV !== "production" && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
+    return {
+      delivery,
+      devOtp: devReturn ? plain : null
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[emailOtp] upsertPendingRegistrationAndSendOtp failed:", err?.message || err);
+    return {
+      delivery: { delivered: false, reason: "exception" },
+      devOtp: null
+    };
   }
-  const plain = generateSixDigitCode();
-  const codeHash = await bcrypt.hash(plain, 8);
-  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
-  await emailOtpRepo.invalidateOpen(normalized, PURPOSES.REGISTER);
-  await pendingRegistrationRepo.upsert({
-    email: normalized,
-    phone,
-    cnicNumber,
-    fullName,
-    passwordHash,
-    role,
-    codeHash,
-    expiresAt
-  });
-  const delivery = await tryDeliverOtp(normalized, PURPOSES.REGISTER, plain);
-  const devReturn =
-    process.env.NODE_ENV !== "production" && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
-  return {
-    delivery,
-    devOtp: devReturn ? plain : null
-  };
 }
 
 async function assertResendCooldownFromTimestamp(req, res, lastAt, emailForDevBypass) {
@@ -223,6 +236,7 @@ async function assertResendCooldown(req, res, email, purpose) {
 }
 
 async function verifyRegisterOtp(req, res) {
+  try {
   const maybeError = validationErrorResponse(req, res);
   if (maybeError) return maybeError;
 
@@ -372,9 +386,15 @@ async function verifyRegisterOtp(req, res) {
 
   const token = signToken(user);
   return sendSuccess(res, 200, authData(user, token), "Email verified");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[emailOtp.verifyRegisterOtp]", err?.message || err);
+    return sendError(res, 500, "Verification failed", null, "SERVER_ERROR");
+  }
 }
 
 async function resendRegisterOtp(req, res) {
+  try {
   const maybeError = validationErrorResponse(req, res);
   if (maybeError) return maybeError;
 
@@ -394,16 +414,7 @@ async function resendRegisterOtp(req, res) {
       passwordHash: pending.password_hash,
       role: pending.role
     });
-    const outbound = validateOutboundMailConfig();
-    const payload = {
-      sent: delivery.delivered || Boolean(devOtp),
-      smtpConfigured: smtpConfigured(),
-      mailOutboundReady: outbound.ok,
-      deliveryFailed: !delivery.delivered && !devOtp,
-      deliveryReason: !delivery.delivered ? delivery.reason || undefined : undefined,
-      deliveryHint: !delivery.delivered && !devOtp ? otpDeliveryHint(delivery.reason) : undefined
-    };
-    if (devOtp) payload.devOtp = devOtp;
+    const payload = buildResendOtpPayload(delivery, devOtp);
     return sendSuccess(res, 200, payload, "If this account is eligible, a verification code was sent.");
   }
 
@@ -419,25 +430,23 @@ async function resendRegisterOtp(req, res) {
   if (gate !== true) return gate;
 
   const { delivery, devOtp } = await issueRegisterOtpForNewUser(email);
-  const outbound = validateOutboundMailConfig();
-  const payload = {
-    sent: delivery.delivered || Boolean(devOtp),
-    smtpConfigured: smtpConfigured(),
-    mailOutboundReady: outbound.ok,
-    deliveryFailed: !delivery.delivered && !devOtp,
-    deliveryReason: !delivery.delivered ? delivery.reason || undefined : undefined,
-    deliveryHint: !delivery.delivered && !devOtp ? otpDeliveryHint(delivery.reason) : undefined
-  };
-  if (devOtp) payload.devOtp = devOtp;
+  const payload = buildResendOtpPayload(delivery, devOtp);
   return sendSuccess(
     res,
     200,
     payload,
     "If this account is eligible, a verification code was sent."
   );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[emailOtp.resendRegisterOtp]", err?.message || err);
+    const code = errorCodeForFailure(err);
+    return sendError(res, statusForErrorCode(code), "Could not resend verification code", null, code);
+  }
 }
 
 async function sendForgotPasswordOtp(req, res) {
+  try {
   const maybeError = validationErrorResponse(req, res);
   if (maybeError) return maybeError;
 
@@ -466,18 +475,26 @@ async function sendForgotPasswordOtp(req, res) {
     expiresAt
   });
   const delivery = await tryDeliverOtp(email, PURPOSES.PASSWORD_RESET, plain);
-  const outbound = validateOutboundMailConfig();
   const devReturn =
     process.env.NODE_ENV !== "production" && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
-  const data = {
-    sent: delivery.delivered || devReturn,
-    smtpConfigured: smtpConfigured(),
-    mailOutboundReady: outbound.ok,
-    deliveryReason: !delivery.delivered ? delivery.reason || undefined : undefined,
-    deliveryHint: !delivery.delivered && !devReturn ? otpDeliveryHint(delivery.reason) : undefined
-  };
-  if (devReturn) data.devOtp = plain;
+  const outbound = validateOutboundMailConfig();
+  const data = buildOtpDeliveryData({
+    delivered: delivery.delivered,
+    reason: delivery.reason,
+    devOtp: devReturn ? plain : null,
+    context: "generic",
+    extra: {
+      smtpConfigured: smtpConfigured(),
+      mailOutboundReady: outbound.ok
+    }
+  });
   return sendSuccess(res, 200, data, msg);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[emailOtp.sendForgotPasswordOtp]", err?.message || err);
+    const code = errorCodeForFailure(err);
+    return sendError(res, statusForErrorCode(code), "Could not process reset request", null, code);
+  }
 }
 
 /**
@@ -551,6 +568,7 @@ async function smtpPing(req, res) {
 }
 
 async function resetPasswordWithOtp(req, res) {
+  try {
   const maybeError = validationErrorResponse(req, res);
   if (maybeError) return maybeError;
 
@@ -597,6 +615,11 @@ async function resetPasswordWithOtp(req, res) {
 
   const token = signToken(updated);
   return sendSuccess(res, 200, authData(updated, token), "Password updated");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[emailOtp.resetPasswordWithOtp]", err?.message || err);
+    return sendError(res, 500, "Could not reset password", null, "SERVER_ERROR");
+  }
 }
 
 module.exports = {

@@ -7,6 +7,10 @@ const userRepo = require("../repositories/userRepo");
 const { upsertPendingRegistrationAndSendOtp, issueRegisterOtpForNewUser } = require("./emailOtpController");
 const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
 const devAuthTestState = require("../services/devAuthTestState");
+const {
+  buildRegisterEmailVerification,
+  buildFailedRegisterEmailVerification
+} = require("../utils/otpDelivery");
 
 const DEMO_FORCE_ADMIN_EMAIL = "mrabdullah0456@gmail.com";
 
@@ -34,45 +38,6 @@ function validationErrorResponse(req, res) {
     "VALIDATION_ERROR",
     { errors: details }
   );
-}
-
-/** Maps OTP delivery outcome to API fields (backward compatible: optional deliveryReason). */
-function buildRegisterEmailVerification(otpPack) {
-  const delivered = Boolean(otpPack?.delivery?.delivered);
-  const reason = otpPack?.delivery?.reason || null;
-  const isDev = process.env.NODE_ENV !== "production";
-  let deliveryHint = null;
-  if (!delivered) {
-    if (isDev) {
-      deliveryHint =
-        "Development: OTP is printed in the server console if email could not be sent.";
-    } else if (reason === "smtp_not_configured") {
-      deliveryHint =
-        "Email is not configured on the server (BREVO_API_KEY). Finish signup after it is set, or use resend when ready.";
-    } else if (reason === "mail_from_missing") {
-      deliveryHint =
-        "Email sender (BREVO_SENDER_EMAIL) is not configured. Complete verification after it is set.";
-    } else if (reason === "authentication_failed") {
-      deliveryHint =
-        "Brevo API key rejected the request. Use the REST API key (xkeysib-…) from Brevo → SMTP & API.";
-    } else if (reason === "sender_not_verified") {
-      deliveryHint =
-        "The sender is not verified in Brevo. Verify the address under Senders & IP; BREVO_SENDER_EMAIL must match.";
-    } else if (reason === "rate_limited") {
-      deliveryHint =
-        "Email was temporarily blocked by rate limits. Retry in a few minutes or check Brevo quotas.";
-    } else {
-      deliveryHint =
-        "We could not deliver the verification email. Try resend in a moment or contact support if it continues.";
-    }
-  }
-  return {
-    pending: true,
-    emailSent: delivered,
-    devOtp: otpPack?.devOtp || undefined,
-    deliveryHint,
-    deliveryReason: reason || undefined
-  };
 }
 
 async function register(req, res) {
@@ -231,14 +196,11 @@ async function register(req, res) {
             otpErr?.message || otpErr,
             isProd ? "" : otpErr?.stack || ""
           );
-          emailVerification = {
-            pending: true,
-            emailSent: false,
-            deliveryHint: isProd
+          emailVerification = buildFailedRegisterEmailVerification(
+            isProd
               ? "Verification could not be started. Try resend after signing in, or contact support."
-              : `Verification email could not be queued: ${otpErr?.message || "unknown error"}`,
-            deliveryReason: "exception"
-          };
+              : `Verification email could not be queued: ${otpErr?.message || "unknown error"}`
+          );
         }
         const base = authDataNoToken(finalUser);
         return sendSuccess(
@@ -270,14 +232,11 @@ async function register(req, res) {
       const isProd = process.env.NODE_ENV === "production";
       // eslint-disable-next-line no-console
       console.error("[auth.register] pending signup OTP issue:", otpErr?.message || otpErr, isProd ? "" : otpErr?.stack || "");
-      emailVerification = {
-        pending: true,
-        emailSent: false,
-        deliveryHint: isProd
+      emailVerification = buildFailedRegisterEmailVerification(
+        isProd
           ? "Verification could not be started. Try again shortly or contact support."
-          : `Verification email could not be queued: ${otpErr?.message || "unknown error"}`,
-        deliveryReason: "exception"
-      };
+          : `Verification email could not be queued: ${otpErr?.message || "unknown error"}`
+      );
     }
     return sendSuccess(
       res,
@@ -405,12 +364,19 @@ async function login(req, res) {
 }
 
 async function profile(req, res) {
-  const user = await userRepo.findById(req.auth.userId);
-  if (!user) return sendError(res, 401, "Unauthorized");
-  return sendSuccess(res, 200, authDataNoToken(user), "OK");
+  try {
+    const user = await userRepo.findById(req.auth.userId);
+    if (!user) return sendError(res, 401, "Unauthorized");
+    return sendSuccess(res, 200, authDataNoToken(user), "OK");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[auth.profile]", err?.message || err);
+    return sendError(res, 500, "Could not load profile", null, "SERVER_ERROR");
+  }
 }
 
 async function updateActiveRole(req, res) {
+  try {
   const { activeRole } = req.body || {};
   const allowed = userRepo.ALLOWED_ROLES;
   const next = String(activeRole || "").trim().toLowerCase();
@@ -439,6 +405,11 @@ async function updateActiveRole(req, res) {
 
   const token = signToken(updated);
   return sendSuccess(res, 200, authData(updated, token), "Role updated");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[auth.updateActiveRole]", err?.message || err);
+    return sendError(res, 500, "Role update failed", null, "SERVER_ERROR");
+  }
 }
 
 async function addRoleToAccount(req, res) {

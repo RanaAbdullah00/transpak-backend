@@ -3,9 +3,14 @@ const bcrypt = require("bcrypt");
 const { validationResult } = require("express-validator");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const authOtpCodeRepo = require("../repositories/authOtpCodeRepo");
-const { sendOtpEmail, validateOutboundMailConfig } = require("../services/emailService");
+const {
+  sendOtpEmail,
+  validateOutboundMailConfig,
+  classifySmtpSendError
+} = require("../services/emailService");
 const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
 const devAuthTestState = require("../services/devAuthTestState");
+const { buildOtpDeliveryData, errorCodeForFailure, statusForErrorCode } = require("../utils/otpDelivery");
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SEND_COOLDOWN_MS = 60 * 1000;
@@ -48,7 +53,7 @@ async function assertSendCooldown(res, email) {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[authOtpAuth] assertSendCooldown error", err?.message || err);
-    return sendError(res, 500, "Could not check send cooldown", null, "SERVER_ERROR");
+    return sendError(res, 503, "Service temporarily unavailable", null, "DATABASE_UNAVAILABLE");
   }
 }
 
@@ -67,18 +72,6 @@ async function sendAuthOtp(req, res) {
     if (gate !== true) return gate;
 
     const pre = validateOutboundMailConfig();
-    if (!pre.ok) {
-      // eslint-disable-next-line no-console
-      console.error("[authOtpAuth.sendAuthOtp] email not ready", { email, reason: pre.reason });
-      return sendError(
-        res,
-        503,
-        "Email delivery is not configured on the server",
-        { reason: pre.reason },
-        "SMTP_NOT_READY"
-      );
-    }
-
     const plain = generateSixDigitCode();
     const otpHash = await bcrypt.hash(plain, 10);
     const expiresAt = new Date(Date.now() + OTP_TTL_MS);
@@ -86,42 +79,65 @@ async function sendAuthOtp(req, res) {
     await authOtpCodeRepo.expireOldOtps(email);
     const inserted = await authOtpCodeRepo.insertOtp(email, otpHash, expiresAt);
     if (!inserted) {
-      return sendError(res, 500, "Could not store OTP", null, "SERVER_ERROR");
+      return sendError(res, 503, "Service temporarily unavailable", null, "DATABASE_UNAVAILABLE");
     }
 
-    try {
-      await sendOtpEmail(email, plain, "auth_verify");
-    } catch (mailErr) {
+    const isNonProd = process.env.NODE_ENV !== "production";
+    const devReturn =
+      isNonProd && String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true";
+
+    let delivery = { delivered: false, reason: pre.ok ? null : pre.reason };
+
+    if (pre.ok) {
+      try {
+        await sendOtpEmail(email, plain, "auth_verify");
+        delivery = { delivered: true, reason: null };
+      } catch (mailErr) {
+        // eslint-disable-next-line no-console
+        console.error("[authOtpAuth.sendAuthOtp] email send failed", {
+          email,
+          classified: mailErr?.smtpDeliveryReason || classifySmtpSendError(mailErr),
+          message: mailErr?.message
+        });
+        delivery = {
+          delivered: false,
+          reason: mailErr?.smtpDeliveryReason || classifySmtpSendError(mailErr) || "send_failed"
+        };
+        if (isNonProd) {
+          // eslint-disable-next-line no-console
+          console.info(`[authOtpAuth.sendAuthOtp][dev] raw OTP for ${email}: ${plain}`);
+        }
+      }
+    } else {
       // eslint-disable-next-line no-console
-      console.error("[authOtpAuth.sendAuthOtp] email send failed", {
-        email,
-        classified: mailErr?.smtpDeliveryReason,
-        message: mailErr?.message
-      });
-      return sendError(
-        res,
-        502,
-        "Could not send verification email",
-        { reason: mailErr?.smtpDeliveryReason || "send_failed" },
-        "SMTP_SEND_FAILED"
-      );
+      console.error("[authOtpAuth.sendAuthOtp] email not ready (OTP stored)", { email, reason: pre.reason });
+      if (isNonProd) {
+        // eslint-disable-next-line no-console
+        console.info(`[authOtpAuth.sendAuthOtp][dev] raw OTP for ${email}: ${plain}`);
+      }
     }
 
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.info(`[authOtpAuth.sendAuthOtp][dev] raw OTP for ${email}: ${plain}`);
-    }
+    const payload = buildOtpDeliveryData({
+      delivered: delivery.delivered,
+      reason: delivery.reason,
+      devOtp: devReturn ? plain : null,
+      context: "generic",
+      extra: { expiresInSeconds: Math.floor(OTP_TTL_MS / 1000) }
+    });
 
     return sendSuccess(
       res,
       200,
-      { sent: true, expiresInSeconds: Math.floor(OTP_TTL_MS / 1000) },
-      "Verification code sent"
+      payload,
+      delivery.delivered
+        ? "Verification code sent"
+        : "Verification code created; email could not be delivered"
     );
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[authOtpAuth.sendAuthOtp] unexpected", err?.message || err);
-    return sendError(res, 500, "Could not send verification code", null, "SERVER_ERROR");
+    const code = errorCodeForFailure(err);
+    return sendError(res, statusForErrorCode(code), "Could not send verification code", null, code);
   }
 }
 

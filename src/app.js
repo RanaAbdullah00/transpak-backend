@@ -5,6 +5,7 @@ const helmet = require("helmet");
 const { isDatabaseUrlConfigured } = require("../db/pool");
 
 const { globalApiLimiter } = require("../middleware/apiRateLimit");
+const { globalErrorMiddleware } = require("../utils/globalErrorHandler");
 
 const authRoutes = require("../routes/authRoutes");
 const profileRoutes = require("../routes/profileRoutes");
@@ -191,12 +192,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     });
   });
 
-  app.use((err, req, res, next) => {
-    const status = err.statusCode || 500;
-    const isProdEnv = process.env.NODE_ENV === "production";
-    const safeMessage = isProdEnv && status >= 500 ? "Server error" : err.message || "Server error";
-    res.status(status).json({ success: false, message: safeMessage, data: null });
-  });
+  app.use(globalErrorMiddleware);
 
   const socketCorsOrigin =
     allowReflectAnyOrigin && !isProd ? true : createCorsOriginCallback(allowedOriginsList);

@@ -10,6 +10,9 @@ const connectDB = require("../config/db");
 const realtimeHub = require("../services/realtimeHub");
 const registerSocketHandlers = require("../sockets");
 const { createApp } = require("./app");
+const { registerProcessSafetyHandlers } = require("../utils/globalErrorHandler");
+
+registerProcessSafetyHandlers();
 
 const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
 

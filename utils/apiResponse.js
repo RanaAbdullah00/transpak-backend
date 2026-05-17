@@ -28,7 +28,10 @@ function sendError(res, statusCode, message, data = null, code = null, meta = nu
     message: message || "Error",
     data: data !== undefined ? data : null
   };
-  if (code) payload.code = code;
+  if (code) {
+    payload.code = code;
+    payload.error = code;
+  }
   if (meta && typeof meta === "object") {
     if (meta.errors !== undefined) payload.errors = meta.errors;
     if (meta.deliveryReason !== undefined) payload.deliveryReason = meta.deliveryReason;

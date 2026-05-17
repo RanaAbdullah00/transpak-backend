@@ -167,8 +167,10 @@ async function verifyBrevoApi() {
       headers: { "api-key": getBrevoApiKey(), accept: "application/json" },
       timeout: BREVO_HTTP_TIMEOUT_MS
     });
-    // eslint-disable-next-line no-console
-    console.log("[emailService] Brevo API verify OK");
+    if (isEmailDebugLog()) {
+      // eslint-disable-next-line no-console
+      console.log("[emailService] Brevo API verify OK");
+    }
     return true;
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -245,7 +247,7 @@ async function sendOtpEmail(toEmail, otp, purpose = "register_verify") {
     try {
       // eslint-disable-next-line no-await-in-loop
       const info = await postBrevoEmail({ to, subject: OTP_SUBJECT, html, text });
-      if (isEmailDebugLog() || process.env.NODE_ENV !== "production") {
+      if (isEmailDebugLog()) {
         // eslint-disable-next-line no-console
         console.log("[emailService] sendOtpEmail ok", { to, messageId: info.messageId });
       }
