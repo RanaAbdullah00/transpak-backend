@@ -43,32 +43,18 @@ function parseCorsOriginsFromEnv() {
     });
 }
 
-/** Cloudflare Pages preview/production hosts (hash changes per deployment). */
-function isCloudflarePagesOrigin(origin) {
-  try {
-    const { protocol, hostname } = new URL(origin);
-    if (protocol !== "https:") return false;
-    return hostname.endsWith(".pages.dev") || hostname.endsWith(".cloudflarepages.app");
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedCorsOrigin(origin, allowedOriginsList, isProd) {
+function isAllowedCorsOrigin(origin, allowedOriginsList) {
   if (!origin) return true;
-  if (allowedOriginsList.includes(origin)) return true;
-  if (isCloudflarePagesOrigin(origin)) return true;
-  if (!isProd && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
-  return false;
+  return allowedOriginsList.includes(origin);
 }
 
-function createCorsOriginCallback(allowedOriginsList, isProd) {
+function createCorsOriginCallback(allowedOriginsList) {
   return (origin, callback) => {
-    if (isAllowedCorsOrigin(origin, allowedOriginsList, isProd)) {
+    if (isAllowedCorsOrigin(origin, allowedOriginsList)) {
       return callback(null, true);
     }
     // eslint-disable-next-line no-console
-    console.warn("[cors] blocked origin:", origin || "(none)");
+    console.warn("[cors] blocked origin:", origin || "(none)", "allowed:", allowedOriginsList.length);
     return callback(null, false);
   };
 }
@@ -114,7 +100,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   const corsOriginCheck =
     allowReflectAnyOrigin && !isProd
       ? (origin, callback) => callback(null, true)
-      : createCorsOriginCallback(allowedOriginsList, isProd);
+      : createCorsOriginCallback(allowedOriginsList);
 
   app.use(
     cors({
@@ -213,7 +199,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   });
 
   const socketCorsOrigin =
-    allowReflectAnyOrigin && !isProd ? true : createCorsOriginCallback(allowedOriginsList, isProd);
+    allowReflectAnyOrigin && !isProd ? true : createCorsOriginCallback(allowedOriginsList);
 
   return { app, socketCorsOrigin };
 }

@@ -53,7 +53,7 @@ const smtpPingLimiter = rateLimit({
   limit: 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  message: { success: false, message: "Too many SMTP test requests", data: null }
+  message: { success: false, message: "Too many email test requests", data: null }
 });
 
 const authOtpSendLimiter = rateLimit({
@@ -154,7 +154,7 @@ router.post(
  *   /otp/forgot/reset     — body: { email, code, password, confirmPassword }
  * Security: rate limits + bcrypt(code) in DB + expiry + attempt cap + resend cooldown (see emailOtpController).
  *
- * Diagnostic (same SMTP transport as OTP):
+ * Diagnostic (same Brevo API as OTP):
  *   POST /otp/smtp-ping  body: { to?: string } — dev: no secret; prod: header x-smtp-test-secret = SMTP_TEST_SECRET
  */
 router.post(

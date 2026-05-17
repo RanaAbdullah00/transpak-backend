@@ -47,17 +47,17 @@ function generateSixDigitCode() {
 function otpDeliveryHint(reason) {
   switch (reason) {
     case "smtp_not_configured":
-      return "Email was not sent: SMTP is not fully configured (SMTP_HOST, SMTP_USER, SMTP_PASS).";
+      return "Email was not sent: Brevo API is not configured (set BREVO_API_KEY).";
     case "mail_from_missing":
-      return "Email was not sent: set SMTP_FROM (or legacy MAIL_FROM). In production, From must be explicit unless SMTP_ALLOW_USER_AS_FROM=true.";
+      return "Email was not sent: set BREVO_SENDER_EMAIL to a verified Brevo sender address.";
     case "authentication_failed":
-      return "Email was not sent: SMTP login failed. For Brevo use the SMTP key from SMTP & API (not the REST API key). Check SMTP_USER / SMTP_PASS.";
+      return "Email was not sent: Brevo API key is invalid. Use the REST API key (xkeysib-…) from Brevo → SMTP & API.";
     case "sender_not_verified":
-      return "Email was not sent: the From address or domain is not allowed by your provider. In Brevo, verify the sender/domain under Senders & IP.";
+      return "Email was not sent: the sender is not verified in Brevo (Senders & IP). BREVO_SENDER_EMAIL must match.";
     case "rate_limited":
-      return "Email was not sent: the SMTP provider temporarily rate-limited this server. Wait and retry, or check Brevo quotas.";
+      return "Email was not sent: Brevo rate-limited this request. Wait and retry.";
     case "send_failed":
-      return "Email was not sent: the SMTP server rejected the message. Check Brevo logs for this submission (response code and text).";
+      return "Email was not sent. Check Brevo transactional logs for this submission.";
     default:
       return "Email was not sent. Please try again or contact support.";
   }
@@ -70,7 +70,7 @@ async function tryDeliverOtp(email, purpose, plainCode) {
   if (!pre.ok) {
     /*
      * ----- DEVELOPMENT ONLY -----
-     * Logs the raw OTP only when NODE_ENV !== "production" so local flows work without SMTP.
+     * Logs the raw OTP only when NODE_ENV !== "production" so local flows work without Brevo.
      * Never log raw OTP in production.
      */
     if (isNonProd) {
@@ -97,7 +97,7 @@ async function tryDeliverOtp(email, purpose, plainCode) {
 
     if (isNonProd) {
       // eslint-disable-next-line no-console
-      console.info(`[emailOtp][dev] SMTP send failed for ${email} (${purpose}):`, errCode || err);
+      console.info(`[emailOtp][dev] email send failed for ${email} (${purpose}):`, errCode || err);
       // eslint-disable-next-line no-console
       console.info(`[emailOtp][dev] raw OTP for ${email}: ${plainCode}`);
     } else {
@@ -481,9 +481,9 @@ async function sendForgotPasswordOtp(req, res) {
 }
 
 /**
- * Diagnostic: submit a minimal message through the same SMTP path as OTP.
+ * Diagnostic: submit a minimal message through the same Brevo API as OTP.
  * Production: requires header `x-smtp-test-secret` matching env SMTP_TEST_SECRET.
- * Development: allowed without secret (still rate-limited). Body.to optional; defaults to SMTP_USER.
+ * Development: allowed without secret (still rate-limited). Body.to optional; defaults to BREVO_SENDER_EMAIL.
  */
 async function smtpPing(req, res) {
   const secret = String(process.env.SMTP_TEST_SECRET || "").trim();
@@ -494,13 +494,13 @@ async function smtpPing(req, res) {
   }
 
   const rawTo = String(req.body?.to || "").trim().toLowerCase();
-  const fallback = String(process.env.SMTP_USER || "").trim().toLowerCase();
+  const fallback = String(process.env.BREVO_SENDER_EMAIL || "").trim().toLowerCase();
   const to = rawTo || fallback;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
     return sendError(
       res,
       400,
-      "Provide a valid { to } email or set SMTP_USER as default recipient",
+      "Provide a valid { to } email or set BREVO_SENDER_EMAIL as default recipient",
       null,
       "VALIDATION_ERROR"
     );
@@ -509,10 +509,10 @@ async function smtpPing(req, res) {
   try {
     const info = await sendMail({
       to,
-      subject: "TransPak SMTP test",
+      subject: "TransPak email test",
       text:
-        "TransPak SMTP test: if you see this, the server accepted the message from this app. Gmail inbox vs spam is separate; check Brevo transactional logs if it does not arrive.",
-      html: "<p>TransPak SMTP test OK.</p><p>If Gmail does not show this, check spam and Brevo logs.</p>"
+        "TransPak email test: Brevo API accepted this message. Check Brevo transactional logs if it does not arrive.",
+      html: "<p>TransPak email test OK.</p><p>Check Brevo logs if the message is missing.</p>"
     });
     return sendSuccess(
       res,
@@ -524,7 +524,7 @@ async function smtpPing(req, res) {
         accepted: info?.accepted,
         rejected: info?.rejected
       },
-      "SMTP accepted the test message (inbox delivery is provider/recipient dependent)"
+      "Brevo API accepted the test message"
     );
   } catch (e) {
     const classified = e?.smtpDeliveryReason || classifySmtpSendError(e);
@@ -539,7 +539,7 @@ async function smtpPing(req, res) {
     return sendError(
       res,
       502,
-      e?.message || "SMTP send failed",
+      e?.message || "Email send failed",
       {
         classification: classified,
         responseCode: e?.responseCode,

@@ -48,22 +48,22 @@ function buildRegisterEmailVerification(otpPack) {
         "Development: OTP is printed in the server console if email could not be sent.";
     } else if (reason === "smtp_not_configured") {
       deliveryHint =
-        "Email is not configured on the server (SMTP). Finish signup after SMTP is configured, or use resend when ready.";
+        "Email is not configured on the server (BREVO_API_KEY). Finish signup after it is set, or use resend when ready.";
     } else if (reason === "mail_from_missing") {
       deliveryHint =
-        "Email sender (SMTP_FROM or MAIL_FROM) is not configured. Complete verification after it is set.";
+        "Email sender (BREVO_SENDER_EMAIL) is not configured. Complete verification after it is set.";
     } else if (reason === "authentication_failed") {
       deliveryHint =
-        "SMTP login failed (wrong SMTP user/key). For Brevo use the SMTP password from SMTP & API, not the REST API key.";
+        "Brevo API key rejected the request. Use the REST API key (xkeysib-…) from Brevo → SMTP & API.";
     } else if (reason === "sender_not_verified") {
       deliveryHint =
-        "The From address is not verified with your email provider. In Brevo: Senders & IP → verify sender/domain; SMTP_FROM must match.";
+        "The sender is not verified in Brevo. Verify the address under Senders & IP; BREVO_SENDER_EMAIL must match.";
     } else if (reason === "rate_limited") {
       deliveryHint =
         "Email was temporarily blocked by rate limits. Retry in a few minutes or check Brevo quotas.";
     } else {
       deliveryHint =
-        "We could not deliver the verification email (SMTP error). Try resend in a moment or contact support if it continues.";
+        "We could not deliver the verification email. Try resend in a moment or contact support if it continues.";
     }
   }
   return {

@@ -69,7 +69,7 @@ async function sendAuthOtp(req, res) {
     const pre = validateOutboundMailConfig();
     if (!pre.ok) {
       // eslint-disable-next-line no-console
-      console.error("[authOtpAuth.sendAuthOtp] SMTP not ready", { email, reason: pre.reason });
+      console.error("[authOtpAuth.sendAuthOtp] email not ready", { email, reason: pre.reason });
       return sendError(
         res,
         503,
@@ -91,19 +91,18 @@ async function sendAuthOtp(req, res) {
 
     try {
       await sendOtpEmail(email, plain, "auth_verify");
-    } catch (smtpErr) {
+    } catch (mailErr) {
       // eslint-disable-next-line no-console
-      console.error("[authOtpAuth.sendAuthOtp] SMTP failed", {
+      console.error("[authOtpAuth.sendAuthOtp] email send failed", {
         email,
-        classified: smtpErr?.smtpDeliveryReason,
-        responseCode: smtpErr?.responseCode,
-        message: smtpErr?.message
+        classified: mailErr?.smtpDeliveryReason,
+        message: mailErr?.message
       });
       return sendError(
         res,
         502,
         "Could not send verification email",
-        { reason: smtpErr?.smtpDeliveryReason || "send_failed" },
+        { reason: mailErr?.smtpDeliveryReason || "send_failed" },
         "SMTP_SEND_FAILED"
       );
     }

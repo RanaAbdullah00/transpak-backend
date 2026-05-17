@@ -4,7 +4,7 @@ const fs = require("fs");
 const http = require("http");
 const { Server } = require("socket.io");
 
-const { verifySmtpConnection, validateOutboundMailConfig } = require("../services/emailService");
+const { verifyBrevoApi, validateOutboundMailConfig } = require("../services/emailService");
 const { isDatabaseUrlConfigured } = require("../db/pool");
 const connectDB = require("../config/db");
 const realtimeHub = require("../services/realtimeHub");
@@ -223,8 +223,8 @@ async function start() {
   realtimeHub.setIO(io);
   registerSocketHandlers(io);
 
-  const smtpPre = validateOutboundMailConfig();
-  const smtpLabel = smtpPre.ok ? "enabled" : `disabled (${smtpPre.reason})`;
+  const mailPre = validateOutboundMailConfig();
+  const mailLabel = mailPre.ok ? "enabled" : `disabled (${mailPre.reason})`;
 
   console.log("[server] boot", {
     NODE_ENV: process.env.NODE_ENV || "undefined",
@@ -233,7 +233,7 @@ async function start() {
     paasPortLock,
     allowPortFallback,
     DATABASE_URL: isDatabaseUrlConfigured() ? "set" : "missing",
-    SMTP: smtpLabel,
+    email: mailLabel,
     DB: dbState.ready ? "ready" : "pending_first_connection"
   });
 
@@ -281,14 +281,14 @@ async function start() {
         url: `http://${BIND_HOST}:${listenAttemptPort}`,
         boundPort: listenAttemptPort,
         NODE_ENV: process.env.NODE_ENV || "development",
-        SMTP: smtpLabel,
+        email: mailLabel,
         DB: dbState.ready ? "ready" : "connecting"
       });
       console.log(`TransPak backend (HTTP + Socket.io) on port ${listenAttemptPort}`);
 
-      if (String(process.env.SMTP_VERIFY_ON_START || "").toLowerCase() === "true") {
-        verifySmtpConnection().catch((e) => {
-          console.error("[server] SMTP_VERIFY_ON_START (non-fatal):", e?.message || e);
+      if (String(process.env.BREVO_VERIFY_ON_START || "").toLowerCase() === "true") {
+        verifyBrevoApi().catch((e) => {
+          console.error("[server] BREVO_VERIFY_ON_START (non-fatal):", e?.message || e);
         });
       }
     });
