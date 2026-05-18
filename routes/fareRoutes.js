@@ -2,7 +2,7 @@ const express = require("express");
 const { body, validationResult } = require("express-validator");
 const { protect } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
-const { estimateDistanceKm, calculateSuggestedFare } = require("../utils/loadFare");
+const { estimateDistanceKm, calculateFareBreakdown } = require("../utils/loadFare");
 const cities = require("../data/pakistanCities.json");
 
 const router = express.Router();
@@ -37,13 +37,13 @@ router.post(
   (req, res) => {
     const { origin, destination, vehicleType, distanceKm } = req.body || {};
     const distance_km = estimateDistanceKm(origin, destination, distanceKm);
-    const suggested_fare = calculateSuggestedFare(distance_km, vehicleType);
+    const breakdown = calculateFareBreakdown(distance_km, vehicleType);
     return sendSuccess(res, 200, {
       origin: String(origin).trim(),
       destination: String(destination).trim(),
-      distanceKm: distance_km,
-      suggestedFare: suggested_fare,
-      vehicleType: vehicleType || "Truck"
+      vehicleType: vehicleType || "Truck",
+      ...breakdown,
+      minimumFare: breakdown.suggestedFare
     });
   }
 );

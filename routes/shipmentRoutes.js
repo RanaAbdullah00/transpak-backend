@@ -8,6 +8,7 @@ const {
   handleValidationErrors
 } = require("../middleware/validateShipmentBody");
 const { query } = require("../db/pool");
+const { notifyUser } = require("../utils/notifyEvent");
 
 const router = express.Router();
 
@@ -201,6 +202,36 @@ router.put(
       const nextLoadStatus = canonical === "booked" ? "booked" : canonical === "closed" ? "closed" : load.status;
       if (nextLoadStatus && nextLoadStatus !== load.status) {
         await query(`UPDATE loads SET status = $2, updated_at = now() WHERE id = $1`, [load.id, nextLoadStatus]);
+      }
+
+      if (canonical === "delivered" || canonical === "closed") {
+        const { rows: parties } = await query(
+          `SELECT shipper_id, assigned_carrier_id FROM loads WHERE id = $1`,
+          [load.id]
+        );
+        const p = parties[0];
+        const ref = load.code || String(load.id).slice(0, 8);
+        const msg = `Shipment ${ref} marked ${canonical}`;
+        if (p?.shipper_id) {
+          await notifyUser({
+            receiverId: p.shipper_id,
+            senderId: req.auth.userId,
+            roleType: "carrier",
+            title: "DELIVERY_COMPLETED",
+            type: "DELIVERY_COMPLETED",
+            message: msg
+          });
+        }
+        if (p?.assigned_carrier_id) {
+          await notifyUser({
+            receiverId: p.assigned_carrier_id,
+            senderId: req.auth.userId,
+            roleType: "shipper",
+            title: "DELIVERY_COMPLETED",
+            type: "DELIVERY_COMPLETED",
+            message: msg
+          });
+        }
       }
 
       const history = await getShipmentHistory(shipment.id);

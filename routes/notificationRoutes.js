@@ -42,7 +42,11 @@ router.get("/", protect, async (req, res) => {
      LIMIT 200`,
     [req.auth.userId]
   );
-  return sendSuccess(res, 200, rows);
+  const mapped = rows.map((r) => ({
+    ...r,
+    type: r.title || null
+  }));
+  return sendSuccess(res, 200, mapped);
 });
 
 router.post(

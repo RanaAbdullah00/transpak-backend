@@ -5,7 +5,8 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
 const loadController = require("../src/controllers/loadController");
-const { estimateDistanceKm, calculateSuggestedFare } = require("../utils/loadFare");
+const { estimateDistanceKm, calculateSuggestedFare, calculateFareBreakdown } = require("../utils/loadFare");
+const { notifyUser, notifyLoadPostedToCarriers } = require("../utils/notifyEvent");
 const { apiLoadStatus } = require("../utils/bidStateMachine");
 
 const router = express.Router();
@@ -41,6 +42,32 @@ function validate(req, res, next) {
 
 router.get("/", protect, requireAnyRole(["carrier", "admin"]), requireActiveRole("carrier"), loadController.listOpen);
 
+router.post(
+  "/:id/pass",
+  protect,
+  requireAnyRole(["carrier", "admin"]),
+  requireActiveRole("carrier"),
+  [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid load id"); })()))],
+  validate,
+  async (req, res) => {
+    try {
+      const loadId = req.params.id;
+      const { rows: loadRows } = await query(`SELECT id, status FROM loads WHERE id = $1`, [loadId]);
+      if (!loadRows[0]) return sendError(res, 404, "Not found", null, "NOT_FOUND");
+      if (loadRows[0].status !== "open") return sendError(res, 409, "Load is not open", null, "LOAD_NOT_OPEN");
+      await query(
+        `INSERT INTO carrier_load_dismissals (load_id, carrier_id)
+         VALUES ($1, $2)
+         ON CONFLICT (load_id, carrier_id) DO NOTHING`,
+        [loadId, req.auth.userId]
+      );
+      return sendSuccess(res, 200, { ok: true, loadId }, "Passed");
+    } catch (err) {
+      return sendError(res, 500, err.message || "Server error");
+    }
+  }
+);
+
 router.get("/mine", protect, requireAnyRole(["shipper", "admin"]), requireActiveRole("shipper"), async (req, res) => {
   try {
     const { rows } = await query(
@@ -49,7 +76,7 @@ router.get("/mine", protect, requireAnyRole(["shipper", "admin"]), requireActive
               l.status, l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
               l.accepted_bid_id AS "acceptedBidId", l.booking_reference AS "bookingReference",
               l.created_at AS "createdAt", l.updated_at AS "updatedAt",
-              (SELECT COUNT(*)::int FROM bids b WHERE b.load_id = l.id AND b.status IN ('pending','suggested')) AS "bidCount"
+              (SELECT COUNT(*)::int FROM bids b WHERE b.load_id = l.id AND b.status IN ('pending_shipper_confirmation','counter_offered','pending','suggested')) AS "bidCount"
        FROM loads l
        WHERE l.shipper_id = $1
        ORDER BY l.created_at DESC
@@ -242,8 +269,19 @@ async function createLoad(req, res) {
   const dropLoc = String(destination || "").trim();
   const distKm = estimateDistanceKm(pickupLoc, dropLoc, distanceKm);
   const vType = String(vehicleType || type || "Truck").trim();
-  const suggestedFare = calculateSuggestedFare(distKm, vType);
+  const fare = calculateFareBreakdown(distKm, vType);
+  const suggestedFare = fare.suggestedFare;
   const resolvedPrice = Number(expectedPrice ?? price ?? suggestedFare ?? 0);
+
+  if (suggestedFare > 0 && resolvedPrice + 0.01 < suggestedFare) {
+    return sendError(
+      res,
+      400,
+      `Offered fare must be at least PKR ${suggestedFare} (recommended minimum)`,
+      { suggestedFare, fuelCost: fare.fuelCost, platformMargin: fare.platformMargin },
+      "FARE_BELOW_MINIMUM"
+    );
+  }
 
   const pickup = String(pickupDate || "").trim();
   if (!isISODateOnly(pickup)) return sendError(res, 400, "pickupDate must be YYYY-MM-DD");
@@ -292,6 +330,20 @@ async function createLoad(req, res) {
      ON CONFLICT (load_id) DO NOTHING`,
     [load.id]
   );
+  await notifyUser({
+    receiverId: req.auth.userId,
+    senderId: req.auth.userId,
+    roleType: "shipper",
+    title: "LOAD_POSTED",
+    type: "LOAD_POSTED",
+    message: `Load ${code} posted: ${pickupLoc} → ${dropLoc}`
+  });
+  await notifyLoadPostedToCarriers({
+    shipperId: req.auth.userId,
+    loadCode: code,
+    origin: pickupLoc,
+    destination: dropLoc
+  });
   return sendSuccess(res, 201, load, "Created");
 }
 

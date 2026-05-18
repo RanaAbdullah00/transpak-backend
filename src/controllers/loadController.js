@@ -25,7 +25,8 @@ async function listOpen(req, res) {
       pickupTo: q.pickupTo,
       sort: q.sort || "newest",
       limit: q.limit,
-      offset: q.offset
+      offset: q.offset,
+      excludeCarrierId: req.auth?.userId
     });
     return sendSuccess(res, 200, loads);
   } catch (err) {

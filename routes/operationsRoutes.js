@@ -23,7 +23,7 @@ router.get("/snapshot", protect, async (req, res) => {
         query(
           `SELECT COUNT(*)::int AS pending FROM bids b
            JOIN loads l ON l.id = b.load_id
-           WHERE l.shipper_id = $1 AND b.status IN ('pending','suggested')`,
+           WHERE l.shipper_id = $1 AND b.status IN ('pending_shipper_confirmation','counter_offered','pending','suggested')`,
           [uid]
         ),
         query(
@@ -44,7 +44,7 @@ router.get("/snapshot", protect, async (req, res) => {
     if (roles.includes("carrier") && active === "carrier") {
       const [{ rows: bids }, { rows: space }, { rows: requests }] = await Promise.all([
         query(
-          `SELECT COUNT(*) FILTER (WHERE status IN ('pending','suggested'))::int AS active,
+          `SELECT COUNT(*) FILTER (WHERE status IN ('pending_shipper_confirmation','counter_offered','pending','suggested'))::int AS active,
                   COUNT(*) FILTER (WHERE status = 'accepted')::int AS won
            FROM bids WHERE carrier_id = $1`,
           [uid]

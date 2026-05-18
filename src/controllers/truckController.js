@@ -35,14 +35,6 @@ const createValidators = [
 async function create(req, res) {
   try {
     const { engineNumber, truckType, capacity, licensePlate, truckCardFrontImage, truckCardBackImage } = req.body || {};
-    console.info("[trucks.create]", {
-        userId: req.auth?.userId,
-        engineNumber: String(engineNumber || "").slice(0, 24),
-        truckType,
-        capacity,
-        hasFront: Boolean(truckCardFrontImage),
-        hasBack: Boolean(truckCardBackImage)
-    });
     if (!isAllowedImageUrl(truckCardFrontImage) || !isAllowedImageUrl(truckCardBackImage)) {
       return sendError(
         res,

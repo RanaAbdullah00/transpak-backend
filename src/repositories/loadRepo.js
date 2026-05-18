@@ -1,4 +1,5 @@
 const { query } = require("../../db/pool");
+const { ACTIVE_BID_STATUSES_SQL } = require("../../utils/bidStateMachine");
 
 function toLoadDto(r) {
   if (!r) return null;
@@ -40,7 +41,8 @@ async function listOpenLoads(filters = {}) {
     pickupTo,
     sort = "newest",
     limit = 50,
-    offset = 0
+    offset = 0,
+    excludeCarrierId = null
   } = filters;
 
   const clauses = [`l.status = 'open'`];
@@ -95,6 +97,13 @@ async function listOpenLoads(filters = {}) {
     clauses.push(`l.pickup_date <= $${i++}::date`);
   }
 
+  if (excludeCarrierId) {
+    params.push(String(excludeCarrierId));
+    clauses.push(
+      `NOT EXISTS (SELECT 1 FROM carrier_load_dismissals d WHERE d.load_id = l.id AND d.carrier_id = $${i++})`
+    );
+  }
+
   let orderBy = "l.created_at DESC";
   if (sort === "price_asc") orderBy = "l.expected_price ASC NULLS LAST";
   if (sort === "price_desc") orderBy = "l.expected_price DESC NULLS LAST";
@@ -108,7 +117,7 @@ async function listOpenLoads(filters = {}) {
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const { rows } = await query(
     `SELECT l.*,
-            (SELECT COUNT(*)::int FROM bids b WHERE b.load_id = l.id AND b.status IN ('pending','suggested')) AS bid_count
+            (SELECT COUNT(*)::int FROM bids b WHERE b.load_id = l.id AND b.status IN ${ACTIVE_BID_STATUSES_SQL}) AS bid_count
      FROM loads l
      ${where}
      ORDER BY ${orderBy}

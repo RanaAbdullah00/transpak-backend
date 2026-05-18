@@ -3,7 +3,16 @@ const { body, param, validationResult } = require("express-validator");
 const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { getPool, query } = require("../db/pool");
-const { assertBidTransition, apiBidStatus, BID, normalizeBidStatus } = require("../utils/bidStateMachine");
+const {
+  assertBidTransition,
+  apiBidStatus,
+  BID,
+  normalizeBidStatus,
+  isCounterOffered,
+  isAwaitingShipper,
+  ACTIVE_BID_STATUSES_SQL,
+  assertCounterLimit
+} = require("../utils/bidStateMachine");
 const { notifyUser } = require("../utils/notifyEvent");
 
 const router = express.Router();
@@ -153,18 +162,19 @@ router.post(
       if (st === BID.ACCEPTED) {
         return sendError(res, 409, "This load already has an accepted carrier", null, "BID_ALREADY_ACCEPTED");
       }
-      if (st === BID.PENDING && Number(existing[0].amount) === Number(amount)) {
+      if (isAwaitingShipper(existing[0].status) && Number(existing[0].amount) === Number(amount)) {
         const bid = { ...existing[0], flowStatus: apiBidStatus(existing[0].status) };
         return sendSuccess(res, 200, bid, "Already submitted");
       }
-      assertBidTransition(existing[0].status, BID.PENDING);
+      assertBidTransition(existing[0].status, BID.PENDING_SHIPPER);
     }
 
     const { rows } = await query(
       `INSERT INTO bids (load_id, carrier_id, amount, status)
-       VALUES ($1, $2, $3, 'pending')
+       VALUES ($1, $2, $3, 'pending_shipper_confirmation')
        ON CONFLICT (load_id, carrier_id)
-         DO UPDATE SET amount = EXCLUDED.amount, status = 'pending', suggested_amount = NULL, suggested_by = NULL, updated_at = now()
+         DO UPDATE SET amount = EXCLUDED.amount, status = 'pending_shipper_confirmation',
+           suggested_amount = NULL, suggested_by = NULL, counter_round_count = 0, updated_at = now()
          RETURNING id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,
                    suggested_amount AS "suggestedAmount", suggested_by AS "suggestedBy",
                    created_at AS "createdAt"`,
@@ -177,15 +187,20 @@ router.post(
         receiverId: loadOwner[0].shipper_id,
         senderId: req.auth.userId,
         roleType: "carrier",
-        title: "BID_RECEIVED",
-        message: `New bid of PKR ${Number(amount)} on your load`
+        title: "SHIPPER_CONFIRMATION_REQUEST",
+        type: "BID_RECEIVED",
+        message: `Carrier bid PKR ${Number(amount)} — confirm to book`
       });
     }
 
     const bid = { ...rows[0], flowStatus: apiBidStatus(rows[0].status) };
     return sendSuccess(res, 201, bid, "Created");
     } catch (err) {
-      if (err.code === "INVALID_BID_TRANSITION" || err.code === "INVALID_BID_STATE") {
+      if (
+        err.code === "INVALID_BID_TRANSITION" ||
+        err.code === "INVALID_BID_STATE" ||
+        err.code === "COUNTER_LIMIT_REACHED"
+      ) {
         return sendError(res, err.statusCode || 409, err.message, null, err.code);
       }
       return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
@@ -215,6 +230,17 @@ router.put(
     }
     assertBidTransition(bid.status, BID.REJECTED);
     await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
+    const { rows: bidMeta } = await query(`SELECT carrier_id FROM bids WHERE id = $1`, [bidId]);
+    if (bidMeta[0]?.carrier_id) {
+      await notifyUser({
+        receiverId: bidMeta[0].carrier_id,
+        senderId: req.auth.userId,
+        roleType: "shipper",
+        title: "BID_REJECTED",
+        type: "BID_REJECTED",
+        message: "Your bid was declined by the shipper"
+      });
+    }
     return sendSuccess(res, 200, { ok: true, flowStatus: "REJECTED" }, "Rejected");
   }
 );
@@ -230,34 +256,48 @@ router.put(
   ],
   validate,
   async (req, res) => {
-    const bidId = req.params.id;
-    const amount = Number(req.body.amount);
-    const { rows: bidRows } = await query(
-      `SELECT b.id, b.load_id, b.status, b.carrier_id, l.shipper_id
-       FROM bids b JOIN loads l ON l.id = b.load_id
-       WHERE b.id = $1`,
-      [bidId]
-    );
-    const bid = bidRows[0];
-    if (!bid) return sendError(res, 404, "Not found");
-    if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
-      return sendError(res, 403, "Forbidden");
+    try {
+      const bidId = req.params.id;
+      const amount = Number(req.body.amount);
+      const { rows: bidRows } = await query(
+        `SELECT b.id, b.load_id, b.status, b.carrier_id, b.counter_round_count, l.shipper_id
+         FROM bids b JOIN loads l ON l.id = b.load_id
+         WHERE b.id = $1`,
+        [bidId]
+      );
+      const bid = bidRows[0];
+      if (!bid) return sendError(res, 404, "Not found");
+      if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+        return sendError(res, 403, "Forbidden");
+      }
+      assertBidTransition(bid.status, BID.COUNTER);
+      assertCounterLimit(bid.counter_round_count);
+      await query(
+        `UPDATE bids
+         SET status = 'counter_offered', suggested_amount = $2, suggested_by = 'shipper',
+             counter_round_count = counter_round_count + 1, updated_at = now()
+         WHERE id = $1`,
+        [bidId, amount]
+      );
+      await notifyUser({
+        receiverId: bid.carrier_id,
+        senderId: req.auth.userId,
+        roleType: "shipper",
+        title: "COUNTER_OFFERED",
+        type: "COUNTER_OFFERED",
+        message: `Shipper counter offer: PKR ${amount}`
+      });
+      return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTER_OFFERED" }, "Suggested");
+    } catch (err) {
+      if (
+        err.code === "INVALID_BID_TRANSITION" ||
+        err.code === "INVALID_BID_STATE" ||
+        err.code === "COUNTER_LIMIT_REACHED"
+      ) {
+        return sendError(res, err.statusCode || 409, err.message, null, err.code);
+      }
+      return sendError(res, 500, err.message || "Server error");
     }
-    assertBidTransition(bid.status, BID.COUNTERED);
-    await query(
-      `UPDATE bids
-       SET status = 'suggested', suggested_amount = $2, suggested_by = 'shipper', updated_at = now()
-       WHERE id = $1`,
-      [bidId, amount]
-    );
-    await notifyUser({
-      receiverId: bid.carrier_id,
-      senderId: req.auth.userId,
-      roleType: "shipper",
-      title: "COUNTER_OFFER",
-      message: `Shipper counter offer: PKR ${amount}`
-    });
-    return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTERED" }, "Suggested");
   }
 );
 
@@ -272,45 +312,59 @@ router.put(
   ],
   validate,
   async (req, res) => {
-    const bidId = req.params.id;
-    const amount = Number(req.body.amount);
-    const { rows: bidRows } = await query(
-      `SELECT b.id, b.carrier_id, b.status, b.suggested_amount, b.suggested_by, l.shipper_id
-       FROM bids b JOIN loads l ON l.id = b.load_id
-       WHERE b.id = $1`,
-      [bidId]
-    );
-    const bid = bidRows[0];
-    if (!bid) return sendError(res, 404, "Not found", null, "NOT_FOUND");
-    if (String(bid.carrier_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
-      return sendError(res, 403, "Forbidden", null, "FORBIDDEN");
+    try {
+      const bidId = req.params.id;
+      const amount = Number(req.body.amount);
+      const { rows: bidRows } = await query(
+        `SELECT b.id, b.carrier_id, b.status, b.suggested_amount, b.suggested_by, b.counter_round_count, l.shipper_id
+         FROM bids b JOIN loads l ON l.id = b.load_id
+         WHERE b.id = $1`,
+        [bidId]
+      );
+      const bid = bidRows[0];
+      if (!bid) return sendError(res, 404, "Not found", null, "NOT_FOUND");
+      if (String(bid.carrier_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+        return sendError(res, 403, "Forbidden", null, "FORBIDDEN");
+      }
+      const st = normalizeBidStatus(bid.status);
+      if (st === BID.ACCEPTED) {
+        return sendError(res, 409, "Bid is already accepted", null, "BID_ALREADY_ACCEPTED");
+      }
+      if (
+        st === BID.COUNTER &&
+        bid.suggested_by === "carrier" &&
+        Number(bid.suggested_amount) === Number(amount)
+      ) {
+        return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTER_OFFERED" }, "Already suggested");
+      }
+      assertBidTransition(bid.status, BID.COUNTER);
+      assertCounterLimit(bid.counter_round_count);
+      await query(
+        `UPDATE bids
+         SET status = 'counter_offered', suggested_amount = $2, suggested_by = 'carrier',
+             counter_round_count = counter_round_count + 1, updated_at = now()
+         WHERE id = $1`,
+        [bidId, amount]
+      );
+      await notifyUser({
+        receiverId: bid.shipper_id,
+        senderId: req.auth.userId,
+        roleType: "carrier",
+        title: "COUNTER_OFFERED",
+        type: "COUNTER_OFFERED",
+        message: `Carrier counter offer: PKR ${amount}`
+      });
+      return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTER_OFFERED" }, "Suggested");
+    } catch (err) {
+      if (
+        err.code === "INVALID_BID_TRANSITION" ||
+        err.code === "INVALID_BID_STATE" ||
+        err.code === "COUNTER_LIMIT_REACHED"
+      ) {
+        return sendError(res, err.statusCode || 409, err.message, null, err.code);
+      }
+      return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
     }
-    const st = normalizeBidStatus(bid.status);
-    if (st === BID.ACCEPTED) {
-      return sendError(res, 409, "Bid is already accepted", null, "BID_ALREADY_ACCEPTED");
-    }
-    if (
-      st === BID.COUNTERED &&
-      bid.suggested_by === "carrier" &&
-      Number(bid.suggested_amount) === Number(amount)
-    ) {
-      return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTERED" }, "Already suggested");
-    }
-    assertBidTransition(bid.status, BID.COUNTERED);
-    await query(
-      `UPDATE bids
-       SET status = 'suggested', suggested_amount = $2, suggested_by = 'carrier', updated_at = now()
-       WHERE id = $1`,
-      [bidId, amount]
-    );
-    await notifyUser({
-      receiverId: bid.shipper_id,
-      senderId: req.auth.userId,
-      roleType: "carrier",
-      title: "COUNTER_OFFER",
-      message: `Carrier counter offer: PKR ${amount}`
-    });
-    return sendSuccess(res, 200, { ok: true, flowStatus: "COUNTERED" }, "Suggested");
   }
 );
 
@@ -328,14 +382,29 @@ router.put(
        SET amount = COALESCE(suggested_amount, amount),
            suggested_amount = NULL,
            suggested_by = NULL,
-           status = 'pending',
+           status = 'pending_shipper_confirmation',
            updated_at = now()
        WHERE id = $1 AND carrier_id = $2
        RETURNING id`,
       [bidId, req.auth.userId]
     );
     if (!rows[0]) return sendError(res, 404, "Not found");
-    return sendSuccess(res, 200, { ok: true }, "Accepted");
+    const { rows: meta } = await query(
+      `SELECT b.carrier_id, l.shipper_id, b.amount
+       FROM bids b JOIN loads l ON l.id = b.load_id WHERE b.id = $1`,
+      [bidId]
+    );
+    if (meta[0]?.shipper_id) {
+      await notifyUser({
+        receiverId: meta[0].shipper_id,
+        senderId: req.auth.userId,
+        roleType: "carrier",
+        title: "SHIPPER_CONFIRMATION_REQUEST",
+        type: "BID_RECEIVED",
+        message: `Carrier accepted your counter — PKR ${Number(meta[0].amount || 0)}`
+      });
+    }
+    return sendSuccess(res, 200, { ok: true, flowStatus: "PENDING_SHIPPER_CONFIRMATION" }, "Accepted");
   }
 );
 
@@ -350,13 +419,13 @@ router.put(
     const bidId = req.params.id;
     const { rows } = await query(
       `UPDATE bids
-       SET suggested_amount = NULL, suggested_by = NULL, status = 'pending', updated_at = now()
+       SET suggested_amount = NULL, suggested_by = NULL, status = 'pending_shipper_confirmation', updated_at = now()
        WHERE id = $1 AND carrier_id = $2
        RETURNING id`,
       [bidId, req.auth.userId]
     );
     if (!rows[0]) return sendError(res, 404, "Not found");
-    return sendSuccess(res, 200, { ok: true }, "Rejected");
+    return sendSuccess(res, 200, { ok: true, flowStatus: "PENDING_SHIPPER_CONFIRMATION" }, "Rejected");
   }
 );
 
@@ -389,20 +458,24 @@ router.put(
         await client.query("ROLLBACK");
         return sendError(res, 404, "Not found");
       }
-      if (bid.status === "accepted") {
+      if (normalizeBidStatus(bid.status) === BID.ACCEPTED) {
         await client.query("ROLLBACK");
         return sendSuccess(res, 200, { id: bid.id, flowStatus: "ACCEPTED" }, "Already accepted");
       }
-      if (bid.status === "rejected") {
+      if (normalizeBidStatus(bid.status) === BID.REJECTED) {
         await client.query("ROLLBACK");
         return sendError(res, 409, "Bid is not actionable", null, "BID_NOT_ACTIONABLE");
       }
       assertBidTransition(bid.status, BID.ACCEPTED);
-      if (bid.status === "suggested" && bid.suggested_by === "shipper") {
+      const bidSt = normalizeBidStatus(bid.status);
+      if (bidSt === BID.COUNTER && bid.suggested_by === "shipper") {
         await client.query("ROLLBACK");
         return sendError(res, 409, "Awaiting carrier response to your offer");
       }
-      if (bid.status !== "pending" && bid.status !== "suggested") {
+      if (
+        bidSt !== BID.PENDING_SHIPPER &&
+        !(bidSt === BID.COUNTER && bid.suggested_by === "carrier")
+      ) {
         await client.query("ROLLBACK");
         return sendError(res, 409, "Bid is not pending");
       }
@@ -423,7 +496,7 @@ router.put(
       );
 
       let effectiveAmount = Number(bid.amount);
-      if (bid.status === "suggested" && bid.suggested_by === "carrier" && bid.suggested_amount != null) {
+      if (isCounterOffered(bid.status) && bid.suggested_by === "carrier" && bid.suggested_amount != null) {
         effectiveAmount = Number(bid.suggested_amount);
       }
 
@@ -439,7 +512,7 @@ router.put(
       );
       await client.query(
         `UPDATE bids SET status = 'rejected', updated_at = now()
-         WHERE load_id = $1 AND id <> $2 AND status IN ('pending', 'suggested')`,
+         WHERE load_id = $1 AND id <> $2 AND status IN ${ACTIVE_BID_STATUSES_SQL}`,
         [bid.load_id, bidId]
       );
 
@@ -478,6 +551,7 @@ router.put(
         senderId: bid.shipper_id,
         roleType: "shipper",
         title: "BID_ACCEPTED",
+        type: "BID_ACCEPTED",
         message: "Your bid was accepted. Contract is active."
       });
       await notifyUser({
@@ -485,6 +559,7 @@ router.put(
         senderId: bid.carrier_id,
         roleType: "carrier",
         title: "CONTRACT_STARTED",
+        type: "BID_ACCEPTED",
         message: "Load booked. You can now contact the shipper."
       });
 

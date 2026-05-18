@@ -16,7 +16,10 @@ const FILES = [
   "008_carrier_space_listings.sql",
   "009_carrier_space_requests.sql",
   "010_space_request_lifecycle.sql",
-  "011_ratings_space_request.sql"
+  "011_ratings_space_request.sql",
+  "012_carrier_load_dismissals.sql",
+  "013_bid_lifecycle_status.sql",
+  "014_bid_counter_round_count.sql"
 ];
 
 async function main() {
