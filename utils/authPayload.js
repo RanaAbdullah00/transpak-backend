@@ -58,7 +58,8 @@ function loginAuthData(user, token) {
       activeRole: user.activeRole,
       verified: Boolean(user.verified),
       profileImage: user.profileImage || user.profile_image || "",
-      fullName: user.fullName || user.full_name || user.name || ""
+      fullName: user.fullName || user.full_name || user.name || "",
+      profileComplete: Boolean(user.isProfileComplete ?? user.profileComplete)
     },
     roles: roleFlags(roles),
     currentRole: user.activeRole

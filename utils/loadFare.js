@@ -52,6 +52,10 @@ function calculateFareBreakdown(distanceKm, vehicleType = "Truck") {
   const fuelCost = Math.round(km * litersPerKm * dieselRate * mult);
   const platformMargin = Math.round(marginPkR + (fuelCost * marginPct) / 100);
   const suggestedFare = Math.max(0, Math.round(fuelCost + platformMargin));
+  const avgKmh = Number(process.env.ROAD_AVG_SPEED_KMH || 55);
+  const estimatedTravelHours =
+    km > 0 ? Math.max(0.5, Math.round((km / avgKmh) * 10) / 10) : 0;
+  const estimatedTravelMinutes = Math.round(estimatedTravelHours * 60);
 
   return {
     distanceKm: km,
@@ -60,7 +64,9 @@ function calculateFareBreakdown(distanceKm, vehicleType = "Truck") {
     suggestedFare,
     dieselRatePerLiter: dieselRate,
     litersPerKm,
-    vehicleMultiplier: mult
+    vehicleMultiplier: mult,
+    estimatedTravelHours,
+    estimatedTravelMinutes
   };
 }
 

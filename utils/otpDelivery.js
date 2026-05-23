@@ -46,7 +46,13 @@ function otpDeliveryHint(reason, context = "generic") {
 function buildOtpDeliveryData({ delivered, reason = null, devOtp = null, extra = {}, context = "generic", hintOverride = null }) {
   const emailDelivered = Boolean(delivered);
   const deliveryStatus = emailDelivered ? "sent" : "failed";
-  const hasDevOtp = Boolean(devOtp);
+  const safeDevOtp =
+    process.env.NODE_ENV !== "production" &&
+    String(process.env.OTP_DEV_RETURN || "").toLowerCase() === "true" &&
+    devOtp
+      ? String(devOtp)
+      : null;
+  const hasDevOtp = Boolean(safeDevOtp);
   const hint =
     hintOverride != null
       ? hintOverride
@@ -63,7 +69,7 @@ function buildOtpDeliveryData({ delivered, reason = null, devOtp = null, extra =
     deliveryFailed: !emailDelivered && !hasDevOtp,
     deliveryReason: !emailDelivered ? reason || undefined : undefined,
     deliveryHint: hint || undefined,
-    ...(hasDevOtp ? { devOtp } : {})
+    ...(hasDevOtp ? { devOtp: safeDevOtp } : {})
   };
 }
 

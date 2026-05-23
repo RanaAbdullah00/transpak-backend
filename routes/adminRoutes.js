@@ -58,6 +58,7 @@ router.get("/stats", async (req, res) => {
     const [
       totalUsers,
       totalLoads,
+      totalShipmentsCount,
       totalBids,
       activeShipments,
       totalReviews,
@@ -65,6 +66,7 @@ router.get("/stats", async (req, res) => {
     ] = await Promise.all([
       query(`SELECT COUNT(*)::int AS c FROM users`),
       query(`SELECT COUNT(*)::int AS c FROM loads`),
+      query(`SELECT COUNT(*)::int AS c FROM shipments`),
       query(`SELECT COUNT(*)::int AS c FROM bids`),
       query(`SELECT COUNT(*)::int AS c FROM shipments WHERE status IN ('booked','pickedup','intransit','delivered')`),
       query(`SELECT COUNT(*)::int AS c FROM ratings`),
@@ -73,7 +75,7 @@ router.get("/stats", async (req, res) => {
     return sendSuccess(res, 200, {
       totalUsers: totalUsers.rows[0].c,
       totalLoads: totalLoads.rows[0].c,
-      totalShipments: totalLoads.rows[0].c,
+      totalShipments: totalShipmentsCount.rows[0].c,
       totalBookings: totalBookings.rows[0].c,
       activeShipments: activeShipments.rows[0].c,
       totalBids: totalBids.rows[0].c,
@@ -87,12 +89,95 @@ router.get("/stats", async (req, res) => {
 router.get(
   "/users",
   asyncHandler(async (req, res) => {
+    const roleFilter = String(req.query?.role || "").trim().toLowerCase();
+    const params = [];
+    const clauses = [];
+    if (roleFilter && ["shipper", "carrier", "admin"].includes(roleFilter)) {
+      params.push(roleFilter);
+      clauses.push(`$${params.length} = ANY(roles)`);
+    }
+    if (req.query?.verified === "false") clauses.push("verified = false");
+    if (req.query?.verified === "true") clauses.push("verified = true");
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const { rows } = await query(
       `SELECT id, COALESCE(full_name, email) AS name, email,
-              cnic_number AS cnic, roles, blocked, verified
+              cnic_number AS cnic, roles, active_role AS "activeRole",
+              blocked, verified, is_profile_complete AS "profileComplete",
+              created_at AS "createdAt"
        FROM users
+       ${where}
        ORDER BY created_at DESC
+       LIMIT 500`,
+      params
+    );
+    return sendSuccess(res, 200, rows);
+  })
+);
+
+router.get(
+  "/bids",
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT b.id, b.load_id AS "loadId", l.code AS "loadCode", b.carrier_id AS "carrierId",
+              COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName",
+              b.amount, b.status, b.created_at AS "createdAt",
+              l.origin, l.destination, l.status AS "loadStatus"
+       FROM bids b
+       JOIN loads l ON l.id = b.load_id
+       LEFT JOIN users u ON u.id = b.carrier_id
+       ORDER BY b.created_at DESC
        LIMIT 500`
+    );
+    return sendSuccess(res, 200, rows);
+  })
+);
+
+router.get(
+  "/notifications",
+  asyncHandler(async (req, res) => {
+    const userId = String(req.query?.userId || "").trim();
+    const params = [];
+    let filter = "";
+    if (userId && isUuid(userId)) {
+      params.push(userId);
+      filter = `WHERE n.receiver_id = $1`;
+    }
+    const { rows } = await query(
+      `SELECT n.id, n.receiver_id AS "receiverId", n.sender_id AS "senderId",
+              n.role_type AS "roleType", n.title, n.message, n.read,
+              n.created_at AS "createdAt",
+              COALESCE(ru.full_name, ru.email) AS "receiverName",
+              COALESCE(su.full_name, su.email) AS "senderName"
+       FROM notifications n
+       LEFT JOIN users ru ON ru.id = n.receiver_id
+       LEFT JOIN users su ON su.id = n.sender_id
+       ${filter}
+       ORDER BY n.created_at DESC
+       LIMIT 300`,
+      params
+    );
+    return sendSuccess(res, 200, rows);
+  })
+);
+
+router.get(
+  "/otp-logs",
+  asyncHandler(async (req, res) => {
+    const email = String(req.query?.email || "").trim().toLowerCase();
+    const params = [];
+    let filter = "";
+    if (email) {
+      params.push(`%${email}%`);
+      filter = `WHERE lower(trim(email)) LIKE $1`;
+    }
+    const { rows } = await query(
+      `SELECT id, email, purpose, expires_at AS "expiresAt", consumed_at AS "consumedAt",
+              attempt_count AS "attemptCount", created_at AS "createdAt"
+       FROM email_otp_challenges
+       ${filter}
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      params
     );
     return sendSuccess(res, 200, rows);
   })
@@ -137,13 +222,15 @@ router.patch(
   "/shipments/:id/status",
   [
     param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid shipment id"); })())),
-    body("status").trim().isLength({ min: 1, max: 32 }).withMessage("status is required")
+    body("status").trim().isLength({ min: 1, max: 32 }).withMessage("status is required"),
+    body("force").optional().isBoolean()
   ],
   validate,
   asyncHandler(async (req, res) => {
     const shipmentId = String(req.params.id);
     const nextStatus = normalizeShipmentStatus(req.body.status);
     if (!nextStatus) return sendError(res, 400, "Invalid status");
+    const force = Boolean(req.body.force);
 
     const { rows: existing } = await query(
       `SELECT s.id, s.status, s.load_id AS "loadId", l.status AS "loadStatus", l.code
@@ -155,8 +242,10 @@ router.patch(
     if (!existing[0]) return sendError(res, 404, "Shipment not found");
 
     const current = existing[0].status;
-    const check = validateShipmentTransition(current, nextStatus);
-    if (!check.ok) return sendError(res, 400, check.message || "Invalid transition");
+    if (!force) {
+      const check = validateShipmentTransition(current, nextStatus);
+      if (!check.ok) return sendError(res, 400, check.message || "Invalid transition");
+    }
 
     const { rows } = await query(
       `UPDATE shipments
@@ -169,7 +258,11 @@ router.patch(
     await query(
       `INSERT INTO shipment_events (shipment_id, status, note)
        VALUES ($1, $2::shipment_status, $3)`,
-      [shipmentId, nextStatus, "Updated by admin"]
+      [
+        shipmentId,
+        nextStatus,
+        `Admin ${req.auth.userId} set ${current} → ${nextStatus}${force ? " (forced)" : ""}`
+      ]
     );
 
     let loadStatus = existing[0].loadStatus;
@@ -192,6 +285,43 @@ router.patch(
       loadStatus,
       code: existing[0].code
     });
+  })
+);
+
+router.patch(
+  "/user/:id/role",
+  [
+    param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid user id"); })())),
+    body("activeRole").optional().trim().isIn(["shipper", "carrier", "admin"]),
+    body("roles").optional().isArray({ min: 1, max: 3 })
+  ],
+  validate,
+  asyncHandler(async (req, res) => {
+    const userId = String(req.params.id);
+    const activeRole = req.body.activeRole ? String(req.body.activeRole).trim().toLowerCase() : null;
+    const rolesInput = Array.isArray(req.body.roles)
+      ? [...new Set(req.body.roles.map((r) => String(r).trim().toLowerCase()).filter(Boolean))]
+      : null;
+
+    const { rows: existing } = await query(`SELECT id, roles, active_role FROM users WHERE id = $1`, [userId]);
+    if (!existing[0]) return sendError(res, 404, "User not found");
+
+    let roles = Array.isArray(existing[0].roles) ? [...existing[0].roles] : [];
+    if (rolesInput?.length) {
+      const allowed = rolesInput.filter((r) => ["shipper", "carrier", "admin"].includes(r));
+      if (!allowed.length) return sendError(res, 400, "Invalid roles");
+      roles = allowed;
+    }
+
+    const nextActive = activeRole && roles.includes(activeRole) ? activeRole : roles[0] || existing[0].active_role;
+    if (!nextActive) return sendError(res, 400, "No valid active role");
+
+    const { rows } = await query(
+      `UPDATE users SET roles = $2::text[], active_role = $3, updated_at = now() WHERE id = $1
+       RETURNING id, COALESCE(full_name, email) AS name, email, roles, active_role AS "activeRole", blocked, verified`,
+      [userId, roles, nextActive]
+    );
+    return sendSuccess(res, 200, rows[0], "Role updated");
   })
 );
 

@@ -1,5 +1,6 @@
 const { query } = require("../../db/pool");
 const { ACTIVE_BID_STATUSES_SQL } = require("../../utils/bidStateMachine");
+const { resolveDeadlineMinutes, biddingEndsAtIso } = require("../../utils/loadDeadline");
 
 function toLoadDto(r) {
   if (!r) return null;
@@ -16,6 +17,8 @@ function toLoadDto(r) {
     distanceKm: r.distance_km != null ? Number(r.distance_km) : null,
     pickupDate: r.pickup_date ?? r.pickupDate,
     deadlineHours: r.deadline_hours ?? r.deadlineHours,
+    deadlineMinutes: resolveDeadlineMinutes(r),
+    biddingEndsAt: biddingEndsAtIso(r),
     status: r.status,
     shipperId: r.shipper_id ?? r.shipperId,
     assignedCarrierId: r.assigned_carrier_id ?? r.assignedCarrierId,

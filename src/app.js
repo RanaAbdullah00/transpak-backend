@@ -180,6 +180,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     });
   });
 
+  app.use("/api/public", require("../routes/publicRoutes"));
   app.use("/api/auth", authRoutes);
   app.use("/api/profile", profileRoutes);
   app.use("/api/shipments", shipmentRoutes);

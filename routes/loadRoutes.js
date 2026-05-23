@@ -8,6 +8,7 @@ const loadController = require("../src/controllers/loadController");
 const { estimateDistanceKm, calculateSuggestedFare, calculateFareBreakdown } = require("../utils/loadFare");
 const { notifyUser, notifyLoadPostedToCarriers } = require("../utils/notifyEvent");
 const { apiLoadStatus } = require("../utils/bidStateMachine");
+const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
 
 const router = express.Router();
 
@@ -265,6 +266,13 @@ async function createLoad(req, res) {
     distanceKm
   } = req.body || {};
 
+  const parsedDeadlineMinutes = parseDeadlineMinutesFromBody(req.body);
+  const deadlineMinutes =
+    parsedDeadlineMinutes != null
+      ? parsedDeadlineMinutes
+      : Number(deadlineHours || 2) * 60;
+  const resolvedDeadlineHours = Math.max(1, Math.ceil(deadlineMinutes / 60));
+
   const pickupLoc = String(origin || "").trim();
   const dropLoc = String(destination || "").trim();
   const distKm = estimateDistanceKm(pickupLoc, dropLoc, distanceKm);
@@ -295,16 +303,17 @@ async function createLoad(req, res) {
   const code = generateCode();
   const { rows } = await query(
     `INSERT INTO loads
-       (code, shipper_id, cargo, origin, destination, weight, vehicle_type, expected_price, pickup_date, deadline_hours, status,
+       (code, shipper_id, cargo, origin, destination, weight, vehicle_type, expected_price, pickup_date, deadline_hours, deadline_minutes, status,
         distance_km, suggested_fare, pickup_location, drop_location)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, 'open', $11, $12, $13, $14)
+       ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, 'open', $12, $13, $14, $15)
      RETURNING id, code, cargo, origin, destination, weight, vehicle_type AS "vehicleType",
                expected_price AS "expectedPrice", pickup_date AS "pickupDate", deadline_hours AS "deadlineHours",
+               deadline_minutes AS "deadlineMinutes", created_at AS "createdAt",
                status, shipper_id AS "shipperId", assigned_carrier_id AS "assignedCarrierId",
                distance_km AS "distanceKm", suggested_fare AS "suggestedFare",
                pickup_location AS "pickupLocation", drop_location AS "dropLocation",
-               created_at AS "createdAt", updated_at AS "updatedAt"`,
+               updated_at AS "updatedAt"`,
     [
       code,
       req.auth.userId,
@@ -315,7 +324,8 @@ async function createLoad(req, res) {
       vType,
       resolvedPrice,
       pickup,
-      Number(deadlineHours || 2),
+      resolvedDeadlineHours,
+      deadlineMinutes,
       distKm,
       suggestedFare,
       pickupLoc,

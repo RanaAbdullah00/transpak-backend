@@ -14,6 +14,7 @@ const {
   assertCounterLimit
 } = require("../utils/bidStateMachine");
 const { notifyUser } = require("../utils/notifyEvent");
+const { isBiddingOpen } = require("../utils/loadDeadline");
 
 const router = express.Router();
 
@@ -142,7 +143,7 @@ router.post(
     try {
     const { loadId, amount } = req.body || {};
     const { rows: loadRows } = await query(
-      `SELECT id, status, deadline_hours
+      `SELECT id, status, deadline_hours, deadline_minutes, created_at
        FROM loads
        WHERE id = $1`,
       [loadId]
@@ -150,6 +151,9 @@ router.post(
     const load = loadRows[0];
     if (!load) return sendError(res, 404, "Not found", null, "NOT_FOUND");
     if (load.status !== "open") return sendError(res, 409, "Load is not open for bidding", null, "LOAD_NOT_OPEN");
+    if (!isBiddingOpen(load)) {
+      return sendError(res, 409, "Bidding deadline has passed", null, "BID_DEADLINE_PASSED");
+    }
 
     const { rows: existing } = await query(
       `SELECT id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,

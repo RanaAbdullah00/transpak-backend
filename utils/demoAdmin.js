@@ -13,7 +13,7 @@ function getDemoAdminEmail() {
   if (!isDemoAdminEnabled()) return "";
   const fromEnv = String(process.env.TRANSPAK_DEMO_ADMIN_EMAIL || "").trim().toLowerCase();
   if (fromEnv) return fromEnv;
-  return "mrabdullah0456@gmail.com";
+  return "mrrajpoot.327@gmail.com";
 }
 
 function isDemoAdminEmail(email) {
