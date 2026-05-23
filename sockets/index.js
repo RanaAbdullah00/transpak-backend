@@ -1,5 +1,15 @@
 const { verifyToken } = require("../utils/jwt");
 const { query: db } = require("../db/pool");
+const {
+  trackRoomKey,
+  buildTrackingUpdatePayload
+} = require("../utils/trackingPayload");
+const {
+  validateGpsCoordinates,
+  checkGpsThrottle,
+  markGpsWritten,
+  assertAssignedCarrierForGps
+} = require("../utils/gpsTracking");
 
 function extractToken(socket) {
   const a = socket.handshake.auth;
@@ -47,6 +57,107 @@ module.exports = function registerSocketHandlers(io) {
         }
         socket.join(`conv:${convId}`);
         if (typeof ack === "function") ack({ ok: true });
+      } catch {
+        if (typeof ack === "function") ack({ ok: false });
+      }
+    });
+
+    socket.on("tracking:join", async (payload) => {
+      try {
+        const refKey = String(payload?.refKey || "").trim();
+        if (!refKey || refKey.length > 72) return;
+        const { rows: loadRows } = await db(
+          `SELECT id, code, shipper_id, assigned_carrier_id
+           FROM loads WHERE code = $1 OR id::text = $1 LIMIT 1`,
+          [refKey]
+        );
+        const load = loadRows[0];
+        if (!load) return;
+        let isAdmin = false;
+        try {
+          const { rows: u } = await db(`SELECT roles FROM users WHERE id = $1`, [uid]);
+          const r = u[0]?.roles;
+          if (Array.isArray(r) && r.includes("admin")) isAdmin = true;
+        } catch {
+          /* ignore */
+        }
+        const isShipper = String(load.shipper_id || "") === uid;
+        const isCarrier = String(load.assigned_carrier_id || "") === uid;
+        if (!isShipper && !isCarrier && !isAdmin) return;
+        const room = trackRoomKey(load);
+        if (room) socket.join(`track:${room}`);
+      } catch {
+        /* ignore */
+      }
+    });
+
+    socket.on("tracking:location", async (payload, ack) => {
+      try {
+        const refKey = String(payload?.refKey || "").trim();
+        const coordCheck = validateGpsCoordinates(payload?.lat, payload?.lng);
+        if (!refKey || !coordCheck.ok) {
+          if (typeof ack === "function") ack({ ok: false });
+          return;
+        }
+        const lat = coordCheck.lat;
+        const lng = coordCheck.lng;
+
+        const { rows: loadRows } = await db(
+          `SELECT l.id, l.code, l.shipper_id, l.assigned_carrier_id
+           FROM loads l
+           WHERE l.code = $1 OR l.id::text = $1
+           LIMIT 1`,
+          [refKey]
+        );
+        const load = loadRows[0];
+        if (!load) {
+          if (typeof ack === "function") ack({ ok: false });
+          return;
+        }
+
+        const carrierErr = assertAssignedCarrierForGps(load, uid);
+        if (carrierErr) {
+          if (typeof ack === "function") ack({ ok: false, message: carrierErr.message });
+          return;
+        }
+
+        const throttle = checkGpsThrottle(load.id);
+        if (!throttle.ok) {
+          if (typeof ack === "function") {
+            ack({ ok: false, message: throttle.message, retryAfterMs: throttle.retryAfterMs });
+          }
+          return;
+        }
+
+        await db(
+          `INSERT INTO shipments (load_id, status, location_unavailable)
+           VALUES ($1, 'posted', true)
+           ON CONFLICT (load_id) DO NOTHING`,
+          [load.id]
+        );
+        const result = await db(
+          `UPDATE shipments
+           SET current_lat = $2, current_lng = $3, location_unavailable = false, updated_at = now()
+           WHERE load_id = $1`,
+          [load.id, lat, lng]
+        );
+        if (!result.rowCount) {
+          if (typeof ack === "function") ack({ ok: false });
+          return;
+        }
+        markGpsWritten(load.id);
+
+        const updatePayload = await buildTrackingUpdatePayload(load.id, lat, lng);
+        if (!updatePayload) {
+          if (typeof ack === "function") ack({ ok: false });
+          return;
+        }
+
+        const room = trackRoomKey(load);
+        if (room) {
+          io.to(`track:${room}`).emit("tracking:update", updatePayload);
+        }
+        if (typeof ack === "function") ack({ ok: true, data: updatePayload });
       } catch {
         if (typeof ack === "function") ack({ ok: false });
       }

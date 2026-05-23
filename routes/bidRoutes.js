@@ -113,12 +113,13 @@ router.get("/mine", protect, requireAnyRole(["carrier", "admin"]), async (req, r
     return sendError(res, 403, "Carrier role required");
   }
   const { rows } = await query(
-    `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
+    `SELECT b.id, b.load_id AS "loadId", l.code AS "loadCode", b.carrier_id AS "carrierId", b.amount,
             b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
             b.created_at AS "createdAt",
             NULL::text AS "carrierName",
             'Truck' AS "vehicleType"
      FROM bids b
+     JOIN loads l ON l.id = b.load_id
      WHERE b.carrier_id = $1
      ORDER BY b.created_at DESC
      LIMIT 500`,

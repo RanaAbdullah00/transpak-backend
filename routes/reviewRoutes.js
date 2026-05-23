@@ -105,7 +105,7 @@ router.post(
   [
     body("toUser").custom((v) => (isUuid(v) ? true : (() => { throw new Error("toUser is required"); })())),
     body("rating").isInt({ min: 1, max: 5 }).withMessage("rating must be 1–5"),
-    body("comment").optional().isString(),
+    body("comment").optional().isString().isLength({ max: 2000 }).withMessage("comment too long"),
     body("loadId").optional().custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid loadId"); })())),
     body("spaceRequestId")
       .optional()

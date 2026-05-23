@@ -12,7 +12,7 @@ const {
   buildFailedRegisterEmailVerification
 } = require("../utils/otpDelivery");
 
-const DEMO_FORCE_ADMIN_EMAIL = "mrabdullah0456@gmail.com";
+const { isDemoAdminEmail } = require("../utils/demoAdmin");
 
 function normalizeRolesAndActiveRole(user) {
   const allowed = userRepo.ALLOWED_ROLES;
@@ -307,7 +307,7 @@ async function login(req, res) {
       return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
     }
 
-    if (!row.verified && normalizedEmail !== DEMO_FORCE_ADMIN_EMAIL) {
+    if (!row.verified && !isDemoAdminEmail(normalizedEmail)) {
       return sendError(
         res,
         403,
@@ -320,8 +320,8 @@ async function login(req, res) {
     let authUser = await userRepo.findByEmail(normalizedEmail);
     if (!authUser) return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
 
-    if (normalizedEmail === DEMO_FORCE_ADMIN_EMAIL) {
-      // Demo override handled at seed time; keep for compatibility.
+    if (isDemoAdminEmail(normalizedEmail)) {
+      // Demo account may skip role-hint normalization when demo mode is enabled.
     } else {
       const normalized = normalizeRolesAndActiveRole(authUser);
       if (!normalized.ok) {

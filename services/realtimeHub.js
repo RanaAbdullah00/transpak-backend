@@ -27,9 +27,19 @@ function getIO() {
   return io;
 }
 
+function emitToTracking(refKey, event, payload) {
+  if (!io || !refKey) return;
+  try {
+    io.to(`track:${String(refKey)}`).emit(event, payload);
+  } catch {
+    // ignore
+  }
+}
+
 module.exports = {
   setIO,
   getIO,
   emitToUser,
-  emitToConversation
+  emitToConversation,
+  emitToTracking
 };

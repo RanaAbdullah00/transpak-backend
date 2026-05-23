@@ -193,6 +193,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api/reviews", reviewRoutes);
   app.use("/api/ratings", reviewRoutes);
   app.use("/api/notifications", notificationRoutes);
+  app.use("/api/feedback", require("../routes/feedbackRoutes"));
   app.use("/api/chat", chatRoutes);
   app.use("/api/trucks", truckRoutes);
   app.use("/api/demo-video", demoVideoRoutes);

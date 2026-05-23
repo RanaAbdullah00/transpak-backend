@@ -5,6 +5,7 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query, getPool } = require("../db/pool");
 const { notifyUser } = require("../utils/notifyEvent");
 const { assertSpaceTransition } = require("../utils/spaceRequestState");
+const { asyncHandler } = require("../utils/asyncHandler");
 
 const router = express.Router();
 
@@ -246,7 +247,7 @@ router.put(
   requireActiveRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  (req, res) => transitionRequest(req, res, "accepted")
+  asyncHandler((req, res) => transitionRequest(req, res, "accepted"))
 );
 
 router.put(
@@ -256,7 +257,7 @@ router.put(
   requireActiveRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  (req, res) => transitionRequest(req, res, "rejected")
+  asyncHandler((req, res) => transitionRequest(req, res, "rejected"))
 );
 
 router.put(
@@ -265,7 +266,7 @@ router.put(
   requireAnyRole(["shipper", "carrier", "admin"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  (req, res) => partyTransition(req, res, "in_transit")
+  asyncHandler((req, res) => partyTransition(req, res, "in_transit"))
 );
 
 router.put(
@@ -274,7 +275,7 @@ router.put(
   requireAnyRole(["shipper", "carrier", "admin"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  (req, res) => partyTransition(req, res, "completed")
+  asyncHandler((req, res) => partyTransition(req, res, "completed"))
 );
 
 module.exports = router;

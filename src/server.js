@@ -108,19 +108,28 @@ async function seedAdminIfNeeded() {
   }
 }
 
-const TRANSPAK_DEMO_ADMIN_EMAIL = "mrabdullah0456@gmail.com";
-const TRANSPAK_DEMO_ADMIN_NAME = "Demo Admin";
-const TRANSPAK_DEMO_ADMIN_PASSWORD = "12345678";
+const { isDemoAdminEnabled, getDemoAdminEmail } = require("../utils/demoAdmin");
 
 async function ensureTranspakDemoAdmin() {
+  if (!isDemoAdminEnabled()) return;
+
   const bcrypt = require("bcrypt");
   const userRepo = require("../repositories/userRepo");
-  const email = TRANSPAK_DEMO_ADMIN_EMAIL.trim().toLowerCase();
+  const email = getDemoAdminEmail();
+  if (!email) return;
+
+  const password = String(process.env.TRANSPAK_DEMO_ADMIN_PASSWORD || "").trim();
+  if (!password) {
+    console.warn("[demo] TRANSPAK_DEMO_ADMIN_PASSWORD not set — skipping demo admin seed");
+    return;
+  }
+
   const phone = String(process.env.TRANSPAK_DEMO_ADMIN_PHONE || "+923001234568").trim();
   const cnic = String(process.env.TRANSPAK_DEMO_ADMIN_CNIC || "00000-0000000-0").trim();
+  const fullName = String(process.env.TRANSPAK_DEMO_ADMIN_NAME || "Demo Admin").trim();
 
   try {
-    const passwordHash = await bcrypt.hash(TRANSPAK_DEMO_ADMIN_PASSWORD, 10);
+    const passwordHash = await bcrypt.hash(password, 10);
     await userRepo.upsertDemoAdmin({
       email,
       passwordHash,
@@ -128,9 +137,9 @@ async function ensureTranspakDemoAdmin() {
       activeRole: "admin",
       phone,
       cnicNumber: cnic,
-      fullName: TRANSPAK_DEMO_ADMIN_NAME
+      fullName
     });
-    console.log("Admin user ensured");
+    console.log("[demo] demo admin ensured:", email);
   } catch (err) {
     console.error("TransPak: ensureTranspakDemoAdmin failed:", err.message || err);
   }

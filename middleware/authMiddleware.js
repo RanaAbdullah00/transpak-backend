@@ -1,8 +1,7 @@
 const { verifyToken } = require("../utils/jwt");
 const { sendError } = require("../utils/apiResponse");
 const userRepo = require("../repositories/userRepo");
-
-const DEMO_FORCE_ADMIN_EMAIL = "mrabdullah0456@gmail.com";
+const { isDemoAdminEmail } = require("../utils/demoAdmin");
 
 async function protect(req, res, next) {
   try {
@@ -27,7 +26,7 @@ async function protect(req, res, next) {
       return sendError(res, 403, "Account is blocked");
     }
     const emailLc = String(user.email || "").trim().toLowerCase();
-    if (!user.verified && emailLc !== DEMO_FORCE_ADMIN_EMAIL) {
+    if (!user.verified && !isDemoAdminEmail(emailLc)) {
       return sendError(res, 403, "Please verify your email before using the app.", null, "EMAIL_NOT_VERIFIED");
     }
 

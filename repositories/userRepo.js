@@ -204,7 +204,7 @@ async function upsertDemoAdmin({ email, passwordHash, roles, activeRole, phone, 
      VALUES ($1, $2, $3::text[], $4, $5, $6, $7, true)
      ON CONFLICT (email)
      DO UPDATE SET
-       password_hash = EXCLUDED.password_hash,
+       password_hash = COALESCE(NULLIF(users.password_hash, ''), EXCLUDED.password_hash),
        roles = (SELECT ARRAY(SELECT DISTINCT unnest(users.roles || EXCLUDED.roles))),
        active_role = EXCLUDED.active_role,
        phone = COALESCE(users.phone, EXCLUDED.phone),
