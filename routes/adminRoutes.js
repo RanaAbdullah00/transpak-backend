@@ -1,6 +1,7 @@
 const express = require("express");
 const { body, param, validationResult } = require("express-validator");
-const { protect, requireRole } = require("../middleware/authMiddleware");
+const { protect } = require("../middleware/authMiddleware");
+const { requireAdminSession } = require("../middleware/sessionGuards");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query, getPool } = require("../db/pool");
 const multer = require("multer");
@@ -32,7 +33,7 @@ function validate(req, res, next) {
   return next();
 }
 
-router.use(protect, requireRole("admin"));
+router.use(protect, requireAdminSession);
 
 const uploadsDir = path.join(__dirname, "..", "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -55,6 +56,19 @@ router.patch("/disputes/:id/resolve", disputeController.adminResolve);
 
 router.get("/stats", async (req, res) => {
   try {
+    const count = async (sql) => {
+      try {
+        const { rows } = await query(sql);
+        return rows[0]?.c ?? 0;
+      } catch (e) {
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.warn("[admin/stats] query skipped:", e?.message || e);
+        }
+        return 0;
+      }
+    };
+
     const [
       totalUsers,
       totalLoads,
@@ -64,22 +78,25 @@ router.get("/stats", async (req, res) => {
       totalReviews,
       totalBookings
     ] = await Promise.all([
-      query(`SELECT COUNT(*)::int AS c FROM users`),
-      query(`SELECT COUNT(*)::int AS c FROM loads`),
-      query(`SELECT COUNT(*)::int AS c FROM shipments`),
-      query(`SELECT COUNT(*)::int AS c FROM bids`),
-      query(`SELECT COUNT(*)::int AS c FROM shipments WHERE status IN ('booked','pickedup','intransit','delivered')`),
-      query(`SELECT COUNT(*)::int AS c FROM ratings`),
-      query(`SELECT COUNT(*)::int AS c FROM bookings`)
+      count(`SELECT COUNT(*)::int AS c FROM users`),
+      count(`SELECT COUNT(*)::int AS c FROM loads`),
+      count(`SELECT COUNT(*)::int AS c FROM shipments`),
+      count(`SELECT COUNT(*)::int AS c FROM bids`),
+      count(
+        `SELECT COUNT(*)::int AS c FROM shipments WHERE status IN ('booked','pickedup','intransit','delivered')`
+      ),
+      count(`SELECT COUNT(*)::int AS c FROM ratings`),
+      count(`SELECT COUNT(*)::int AS c FROM bookings`)
     ]);
+
     return sendSuccess(res, 200, {
-      totalUsers: totalUsers.rows[0].c,
-      totalLoads: totalLoads.rows[0].c,
-      totalShipments: totalShipmentsCount.rows[0].c,
-      totalBookings: totalBookings.rows[0].c,
-      activeShipments: activeShipments.rows[0].c,
-      totalBids: totalBids.rows[0].c,
-      totalReviews: totalReviews.rows[0].c
+      totalUsers,
+      totalLoads,
+      totalShipments: totalShipmentsCount,
+      totalBookings,
+      activeShipments,
+      totalBids,
+      totalReviews
     });
   } catch (err) {
     return sendError(res, 500, err.message || "Server error");

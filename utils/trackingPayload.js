@@ -67,6 +67,14 @@ async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
     ? new Date(shipment.updated_at).toISOString()
     : null;
 
+  let routeCoords = buildRouteCoordinates(origin, destination);
+  try {
+    const { getLoadRouteCoordinates } = require("./loadRouteSnapshot");
+    routeCoords = await getLoadRouteCoordinates(loadId);
+  } catch {
+    /* column may be missing before migration 016 */
+  }
+
   const { ts: _dropTs, ...safeExtra } = extra || {};
   return {
     loadId: String(load.id),
@@ -86,7 +94,7 @@ async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
       locationUnavailable: !currentLocation,
       locationUpdatedAt
     },
-    liveTrackingMap: { coordinates: buildRouteCoordinates(origin, destination) },
+    liveTrackingMap: { coordinates: routeCoords },
     ...safeExtra,
     ts: Date.now()
   };

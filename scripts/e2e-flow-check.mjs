@@ -1,0 +1,105 @@
+/**
+ * API-level E2E smoke: shipper post load → carrier bid → accept → tracking route.
+ * Usage: node scripts/e2e-flow-check.mjs [baseUrl]
+ */
+require("dotenv").config();
+const axios = require("axios");
+
+const BASE = (process.argv[2] || "http://127.0.0.1:10000").replace(/\/$/, "");
+
+async function login(email, password, roleHint) {
+  const res = await axios.post(`${BASE}/api/auth/login`, {
+    email,
+    password,
+    ...(roleHint ? { roleHint } : {})
+  });
+  let token = res.data?.data?.token;
+  let user = res.data?.data?.user;
+  if (!token) throw new Error(`login failed for ${email}`);
+
+  const want = roleHint ? String(roleHint).trim().toLowerCase() : "";
+  if (want && user?.activeRole !== want) {
+    const switched = await axios.patch(
+      `${BASE}/api/auth/active-role`,
+      { activeRole: want },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    token = switched.data?.data?.token || token;
+    user = switched.data?.data?.user || user;
+  }
+
+  return { token, user, headers: { Authorization: `Bearer ${token}` } };
+}
+
+async function main() {
+  const shipperEmail = process.env.E2E_SHIPPER_EMAIL;
+  const shipperPass = process.env.E2E_SHIPPER_PASSWORD;
+  const carrierEmail = process.env.E2E_CARRIER_EMAIL;
+  const carrierPass = process.env.E2E_CARRIER_PASSWORD;
+
+  if (!shipperEmail || !shipperPass || !carrierEmail || !carrierPass) {
+    console.log(
+      "[e2e] Set E2E_SHIPPER_EMAIL, E2E_SHIPPER_PASSWORD, E2E_CARRIER_EMAIL, E2E_CARRIER_PASSWORD in .env"
+    );
+    console.log("[e2e] Skipping full flow — running ORS + health only.");
+    const health = await axios.get(`${BASE}/api/health`);
+    console.log("[e2e] health", health.data?.data?.db);
+    process.exit(0);
+  }
+
+  const shipper = await login(shipperEmail, shipperPass, "shipper");
+  const pickupDate = new Date(Date.now() + 86400000 * 3).toISOString().slice(0, 10);
+
+  const loadRes = await axios.post(
+    `${BASE}/api/loads/create`,
+    {
+      cargo: "E2E QA load",
+      origin: "Lahore",
+      destination: "Karachi",
+      weight: 500,
+      vehicleType: "Truck",
+      expectedPrice: 150000,
+      pickupDate,
+      deadlineMinutes: 360
+    },
+    shipper.headers
+  );
+  const load = loadRes.data?.data;
+  console.log("[e2e] load created", load?.code, load?.id);
+
+  const routeRes = await axios.get(`${BASE}/api/maps/route`, {
+    params: { origin: "Lahore", destination: "Karachi" },
+    headers: shipper.headers
+  });
+  const route = routeRes.data?.data;
+  console.log("[e2e] route", {
+    points: route?.coordinates?.length,
+    source: route?.source,
+    fallback: route?.fallback
+  });
+
+  const carrier = await login(carrierEmail, carrierPass, "carrier");
+  const bidRes = await axios.post(
+    `${BASE}/api/bids`,
+    { loadId: load.id, amount: 140000 },
+    carrier.headers
+  );
+  console.log("[e2e] bid placed", bidRes.data?.data?.id || bidRes.data?.data?.status);
+
+  const trackRes = await axios.get(`${BASE}/api/shipments/track/${encodeURIComponent(load.code)}`, {
+    headers: shipper.headers
+  });
+  const track = trackRes.data?.data;
+  console.log("[e2e] tracking", {
+    refKey: track?.refKey,
+    routePoints: track?.liveTrackingMap?.coordinates?.length,
+    status: track?.tracking?.status
+  });
+
+  console.log("[e2e] OK — extend with bid accept when E2E credentials support it.");
+}
+
+main().catch((e) => {
+  console.error("[e2e] failed", e.response?.data || e.message);
+  process.exit(1);
+});

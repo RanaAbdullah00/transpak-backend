@@ -23,8 +23,12 @@ const {
   markGpsWritten,
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
+const { shipmentsRouteLimiter } = require("../middleware/apiRateLimit");
+const { forbidAdminCommercialMutation } = require("../middleware/sessionGuards");
+const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 
 const router = express.Router();
+router.use(shipmentsRouteLimiter);
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -123,6 +127,32 @@ async function getShipmentHistory(shipmentId) {
     location: r.location_label || r.note || "System"
   }));
 }
+
+router.get(
+  "/completed",
+  protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
+  async (req, res) => {
+    try {
+      const uid = req.auth.userId;
+      const { rows } = await query(
+        `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
+                l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
+                s.status AS "shipmentStatus", s.updated_at AS "completedAt"
+         FROM shipments s
+         JOIN loads l ON l.id = s.load_id
+         WHERE s.status IN ('delivered', 'closed')
+           AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
+         ORDER BY s.updated_at DESC
+         LIMIT 100`,
+        [uid]
+      );
+      return sendSuccess(res, 200, rows);
+    } catch (err) {
+      return sendError(res, 500, err.message || "Server error");
+    }
+  }
+);
 
 router.get(
   "/track/:id",
@@ -270,6 +300,7 @@ router.put(
 router.put(
   "/:id/location",
   protect,
+  forbidAdminCommercialMutation,
   requireAnyRole(["carrier"]),
   requireActiveRole("carrier"),
   shipmentIdParam,
@@ -309,6 +340,7 @@ router.put(
         return sendError(res, 500, "Could not save location");
       }
       markGpsWritten(load.id);
+      await appendShipmentLocationLog(load.id, lat, lng);
 
       const history = await getShipmentHistory(shipment.id);
       const core = await buildTrackingUpdatePayload(load.id, lat, lng);

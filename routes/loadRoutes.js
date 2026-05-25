@@ -9,6 +9,9 @@ const { estimateDistanceKm, calculateSuggestedFare, calculateFareBreakdown } = r
 const { notifyUser, notifyLoadPostedToCarriers } = require("../utils/notifyEvent");
 const { apiLoadStatus } = require("../utils/bidStateMachine");
 const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
+const { asyncHandler } = require("../utils/asyncHandler");
+const { forbidAdminCommercialMutation } = require("../middleware/sessionGuards");
+const { persistLoadRouteSnapshot } = require("../utils/loadRouteSnapshot");
 
 const router = express.Router();
 
@@ -247,10 +250,11 @@ router.get("/:id", protect, async (req, res) => {
 });
 
 async function createLoad(req, res) {
+  try {
   const user = await userRepo.findById(req.auth.userId);
   if (!user) return sendError(res, 401, "Unauthorized");
   if (!user.isProfileComplete) {
-    return sendError(res, 403, "Complete your profile to post loads");
+    return sendError(res, 403, "Complete your profile to post loads", null, "PROFILE_INCOMPLETE");
   }
   const {
     cargo,
@@ -340,21 +344,47 @@ async function createLoad(req, res) {
      ON CONFLICT (load_id) DO NOTHING`,
     [load.id]
   );
-  await notifyUser({
-    receiverId: req.auth.userId,
-    senderId: req.auth.userId,
-    roleType: "shipper",
-    title: "LOAD_POSTED",
-    type: "LOAD_POSTED",
-    message: `Load ${code} posted: ${pickupLoc} → ${dropLoc}`
-  });
-  await notifyLoadPostedToCarriers({
-    shipperId: req.auth.userId,
-    loadCode: code,
-    origin: pickupLoc,
-    destination: dropLoc
-  });
+  try {
+    await persistLoadRouteSnapshot(load.id, pickupLoc, dropLoc);
+  } catch (routeErr) {
+    // eslint-disable-next-line no-console
+    console.error("[loads.create] route snapshot failed:", routeErr?.message || routeErr);
+  }
+  try {
+    await notifyUser({
+      receiverId: req.auth.userId,
+      senderId: req.auth.userId,
+      roleType: "shipper",
+      title: "LOAD_POSTED",
+      type: "LOAD_POSTED",
+      message: `Load ${code} posted: ${pickupLoc} → ${dropLoc}`
+    });
+    await notifyLoadPostedToCarriers({
+      shipperId: req.auth.userId,
+      loadCode: code,
+      origin: pickupLoc,
+      destination: dropLoc
+    });
+  } catch (notifyErr) {
+    // eslint-disable-next-line no-console
+    console.error("[loads.create] notification dispatch failed:", notifyErr?.message || notifyErr);
+  }
   return sendSuccess(res, 201, load, "Created");
+  } catch (err) {
+    const pgCode = String(err?.code || "");
+    if (pgCode === "42703") {
+      return sendError(
+        res,
+        503,
+        "Database schema is outdated. Run npm run db:migrate on the server.",
+        null,
+        "SCHEMA_OUTDATED"
+      );
+    }
+    // eslint-disable-next-line no-console
+    console.error("[loads.create]", err?.message || err);
+    return sendError(res, 500, err?.message || "Could not create load", null, "SERVER_ERROR");
+  }
 }
 
 const createLoadValidators = [
@@ -383,6 +413,11 @@ const createLoadValidators = [
     .toInt()
     .isInt({ min: 1, max: 72 })
     .withMessage("deadlineHours must be 1-72"),
+  body("deadlineMinutes")
+    .optional({ nullable: true })
+    .toInt()
+    .isInt({ min: 15, max: 4320 })
+    .withMessage("deadlineMinutes must be 15-4320"),
   body("distanceKm")
     .optional({ nullable: true })
     .toFloat()
@@ -390,7 +425,25 @@ const createLoadValidators = [
     .withMessage("distanceKm must be non-negative")
 ];
 
-router.post("/", protect, requireAnyRole(["shipper", "admin"]), requireActiveRole("shipper"), createLoadValidators, validate, createLoad);
-router.post("/create", protect, requireAnyRole(["shipper", "admin"]), requireActiveRole("shipper"), createLoadValidators, validate, createLoad);
+router.post(
+  "/",
+  protect,
+  forbidAdminCommercialMutation,
+  requireAnyRole(["shipper", "admin"]),
+  requireActiveRole("shipper"),
+  createLoadValidators,
+  validate,
+  asyncHandler(createLoad)
+);
+router.post(
+  "/create",
+  protect,
+  forbidAdminCommercialMutation,
+  requireAnyRole(["shipper", "admin"]),
+  requireActiveRole("shipper"),
+  createLoadValidators,
+  validate,
+  asyncHandler(createLoad)
+);
 
 module.exports = router;

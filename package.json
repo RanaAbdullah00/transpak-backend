@@ -12,10 +12,18 @@
     "build": "node scripts/verify-upload-deps.js && node --check server.js && node --check src/server.js && node --check src/app.js",
     "test": "node --test",
     "seed": "node scripts/seedUsers.js",
-    "seed:admin": "node scripts/seedUsers.js",
+    "seed:demo-admin": "node scripts/seedDemoAdmin.js",
+    "check:login": "node scripts/runtime-login-check.js",
+    "check:schema": "node scripts/qa-schema-check.js",
+    "check:api-smoke": "node scripts/qa-api-smoke.js",
+    "check:ors": "node scripts/verify-ors-route.js",
+    "check:e2e-flow": "node scripts/e2e-flow-check.mjs",
     "db:migrate:otp": "node scripts/applyOtpMigrations.js",
+    "db:migrate": "node -e \"require('dotenv').config();require('./db/migrate').runMigrations().then(()=>process.exit(0)).catch(e=>{console.error(e.message||e);process.exit(1)})\"",
     "dev:reset-test-auth": "node scripts/devResetTestAuth.js",
-    "deploy:check": "node ../scripts/check-production-sync.mjs"
+    "deploy:check": "node ../scripts/check-production-sync.mjs",
+    "deploy:qa": "node ../scripts/final-production-qa.mjs",
+    "deploy:smoke": "node ../scripts/live-smoke-test.mjs"
   },
   "dependencies": {
     "axios": "^1.16.1",

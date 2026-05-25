@@ -6,9 +6,11 @@ const helmet = require("helmet");
 const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
 const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
 
-const { isDatabaseUrlConfigured } = require("../db/pool");
+const { isDatabaseUrlConfigured, query } = require("../db/pool");
+const { isHostedOnPaas } = require("../utils/paasRuntime");
 
 const { globalApiLimiter } = require("../middleware/apiRateLimit");
+const { requestLogger } = require("../middleware/requestLogger");
 const { deployHeaders } = require("../middleware/deployHeaders");
 const { globalErrorMiddleware } = require("../utils/globalErrorHandler");
 
@@ -51,7 +53,12 @@ function parseCorsOriginsFromEnv() {
 
 function isAllowedCorsOrigin(origin, allowedOriginsList) {
   if (!origin) return true;
-  return allowedOriginsList.includes(origin);
+  if (allowedOriginsList.includes(origin)) return true;
+  // Local laptop dev: any Vite port when API is not running on Render/Railway/Fly.
+  if (!isHostedOnPaas() && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+    return true;
+  }
+  return false;
 }
 
 function createCorsOriginCallback(allowedOriginsList) {
@@ -70,6 +77,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   app.set("trust proxy", 1);
   app.use(deployHeaders);
+  app.use(requestLogger);
 
   app.use(
     helmet({
@@ -86,16 +94,17 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   const isProd = process.env.NODE_ENV === "production";
   const envOrigins = parseCorsOriginsFromEnv();
-  const defaultLocalOrigins = isProd
-    ? []
-    : [
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:5174",
-        "http://127.0.0.1:5175"
-      ];
+  const localDevOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
+    "http://127.0.0.1:5176"
+  ];
+  const defaultLocalOrigins = isProd && isHostedOnPaas() ? [] : localDevOrigins;
   const allowedOriginsList = [...new Set([...defaultLocalOrigins, ...envOrigins])];
   const allowReflectAnyOrigin = !isProd && allowedOriginsList.length === 0;
 
@@ -144,8 +153,21 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   app.use("/api", globalApiLimiter);
 
-  app.get("/api/health", (req, res) =>
-    res.json({
+  app.get("/api/health", async (req, res) => {
+    let dbPing = "skipped";
+    if (dbState?.ready) {
+      try {
+        await query("SELECT 1");
+        dbPing = "ok";
+      } catch (pingErr) {
+        dbPing = "error";
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.error("[health] db ping failed:", pingErr?.message || pingErr);
+        }
+      }
+    }
+    return res.json({
       success: true,
       message: "ok",
       data: {
@@ -154,10 +176,11 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         build: BUILD_ID,
         commit: BUILD_ID,
         uptime: process.uptime(),
-        db: dbState?.ready ? "ready" : "unavailable"
+        db: dbState?.ready ? "ready" : "unavailable",
+        dbPing
       }
-    })
-  );
+    });
+  });
 
   app.use("/api", (req, res, next) => {
     if (req.path === "/health") return next();
@@ -187,6 +210,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api/loads", loadRoutes);
   app.use("/api/bids", bidRoutes);
   app.use("/api/fare", require("../routes/fareRoutes"));
+  app.use("/api/maps", require("../routes/mapRoutes"));
   app.use("/api/carrier-space", require("../routes/carrierSpaceRoutes"));
   app.use("/api/carrier-space", require("../routes/spaceBookingRoutes"));
   app.use("/api/operations", require("../routes/operationsRoutes"));

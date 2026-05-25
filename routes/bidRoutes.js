@@ -15,6 +15,8 @@ const {
 } = require("../utils/bidStateMachine");
 const { notifyUser } = require("../utils/notifyEvent");
 const { isBiddingOpen } = require("../utils/loadDeadline");
+const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
+const { forbidAdminCommercialMutation } = require("../middleware/sessionGuards");
 
 const router = express.Router();
 
@@ -132,6 +134,8 @@ router.get("/mine", protect, requireAnyRole(["carrier", "admin"]), async (req, r
 router.post(
   "/",
   protect,
+  forbidAdminCommercialMutation,
+  bidsRouteLimiter,
   requireAnyRole(["carrier", "admin"]),
   requireActiveRole("carrier"),
   [

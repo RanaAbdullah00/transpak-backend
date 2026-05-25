@@ -55,7 +55,7 @@ async function findRowByEmailWithPassword(email) {
             full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete,
             password_hash
      FROM users
-     WHERE email = $1`,
+     WHERE lower(trim(email)) = lower(trim($1))`,
     [String(email || "").trim().toLowerCase()]
   );
   return rows[0] || null;
@@ -66,7 +66,7 @@ async function findByEmail(email) {
     `SELECT id, email, roles, active_role, blocked, verified,
             full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
      FROM users
-     WHERE email = $1`,
+     WHERE lower(trim(email)) = lower(trim($1))`,
     [String(email || "").trim().toLowerCase()]
   );
   return toAuthUser(rows[0]);

@@ -49,4 +49,62 @@ const uploadLimiter = rateLimit({
   }
 });
 
-module.exports = { globalApiLimiter, translationRuntimeLimiter, uploadLimiter };
+const mapsRouteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.MAPS_RATE_LIMIT_PER_MIN || 40),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const uid = req.auth?.userId;
+    return uid ? `map:${uid}` : `map:${req.ip}`;
+  },
+  message: {
+    success: false,
+    message: "Map route rate limit exceeded. Try again shortly.",
+    code: "RATE_LIMIT",
+    data: null
+  }
+});
+
+const shipmentsRouteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.SHIPMENTS_RATE_LIMIT_PER_MIN || 120),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const uid = req.auth?.userId;
+    return uid ? `ship:${uid}` : `ship:${req.ip}`;
+  },
+  message: {
+    success: false,
+    message: "Shipment API rate limit exceeded.",
+    code: "RATE_LIMIT",
+    data: null
+  }
+});
+
+const bidsRouteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.BIDS_RATE_LIMIT_PER_MIN || 80),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const uid = req.auth?.userId;
+    return uid ? `bid:${uid}` : `bid:${req.ip}`;
+  },
+  message: {
+    success: false,
+    message: "Bid API rate limit exceeded.",
+    code: "RATE_LIMIT",
+    data: null
+  }
+});
+
+module.exports = {
+  globalApiLimiter,
+  translationRuntimeLimiter,
+  uploadLimiter,
+  mapsRouteLimiter,
+  shipmentsRouteLimiter,
+  bidsRouteLimiter
+};

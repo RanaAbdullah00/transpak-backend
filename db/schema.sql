@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS loads (
   expected_price numeric NOT NULL DEFAULT 0,
   pickup_date date NOT NULL,
   deadline_hours int NOT NULL DEFAULT 2,
+  deadline_minutes int,
   status text NOT NULL DEFAULT 'open', -- open/booked/closed/cancelled (shipment lifecycle is in shipments)
   assigned_carrier_id uuid REFERENCES users(id) ON DELETE SET NULL,
   accepted_bid_id uuid,

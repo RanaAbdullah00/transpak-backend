@@ -13,6 +13,25 @@ const {
 } = require("../utils/otpDelivery");
 
 const { isDemoAdminEmail } = require("../utils/demoAdmin");
+const { resolveAuthUserForSession } = require("../utils/resolveAuthUser");
+const { isTransientDbError, classifyDbError } = require("../utils/dbErrors");
+
+async function withDbRetry(fn, attempts = 2) {
+  let lastErr;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1 && isTransientDbError(err)) {
+        await new Promise((r) => setTimeout(r, 350 * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
 
 function normalizeRolesAndActiveRole(user) {
   const allowed = userRepo.ALLOWED_ROLES;
@@ -279,7 +298,7 @@ async function login(req, res) {
     const { email, password, roleHint } = req.body;
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
-    const row = await userRepo.findRowByEmailWithPassword(normalizedEmail);
+    const row = await withDbRetry(() => userRepo.findRowByEmailWithPassword(normalizedEmail));
     if (!row) {
       return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
     }
@@ -317,11 +336,11 @@ async function login(req, res) {
       );
     }
 
-    let authUser = await userRepo.findByEmail(normalizedEmail);
+    let authUser = await withDbRetry(() => userRepo.findByEmail(normalizedEmail));
     if (!authUser) return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
 
     if (isDemoAdminEmail(normalizedEmail)) {
-      // Demo account may skip role-hint normalization when demo mode is enabled.
+      authUser.activeRole = "admin";
     } else {
       const normalized = normalizeRolesAndActiveRole(authUser);
       if (!normalized.ok) {
@@ -343,15 +362,20 @@ async function login(req, res) {
     }
 
     if (authUser.activeRole) {
-      await userRepo.setActiveRole(authUser.id, authUser.activeRole);
+      await withDbRetry(() => userRepo.setActiveRole(authUser.id, authUser.activeRole));
     }
 
-    const refreshed = await userRepo.findById(authUser.id);
-    const token = signToken(refreshed || authUser);
-    return sendSuccess(res, 200, loginAuthData(refreshed || authUser, token), "Logged in");
+    const refreshed = await withDbRetry(() => userRepo.findById(authUser.id));
+    const sessionUser = await resolveAuthUserForSession(refreshed || authUser);
+    const token = signToken(sessionUser);
+    return sendSuccess(res, 200, loginAuthData(sessionUser, token), "Logged in");
   } catch (err) {
+    const classified = classifyDbError(err);
     // eslint-disable-next-line no-console
-    console.error("[auth.login] full error:", err);
+    console.error("[auth.login]", classified.log || err?.message || err, err?.code || "");
+    if (classified.code !== "SERVER_ERROR") {
+      return sendError(res, classified.status, classified.message, null, classified.code);
+    }
     const isProd = process.env.NODE_ENV === "production";
     return sendError(
       res,

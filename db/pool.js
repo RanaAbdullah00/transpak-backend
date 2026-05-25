@@ -75,7 +75,9 @@ function getPool() {
     ...config,
     connectionTimeoutMillis: getConnectionTimeoutMs(),
     idleTimeoutMillis: 10000,
-    max: Number(process.env.PG_POOL_MAX || 10)
+    max: Number(process.env.PG_POOL_MAX || 10),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000
   });
   _pool.on("error", (err) => {
     // eslint-disable-next-line no-console

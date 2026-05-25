@@ -5,7 +5,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const { verifyBrevoApi, validateOutboundMailConfig } = require("../services/emailService");
-const { isDatabaseUrlConfigured } = require("../db/pool");
+const { isDatabaseUrlConfigured, query } = require("../db/pool");
 const connectDB = require("../config/db");
 const realtimeHub = require("../services/realtimeHub");
 const registerSocketHandlers = require("../sockets");
@@ -125,7 +125,7 @@ async function ensureTranspakDemoAdmin() {
   }
 
   const phone = String(process.env.TRANSPAK_DEMO_ADMIN_PHONE || "+923001234568").trim();
-  const cnic = String(process.env.TRANSPAK_DEMO_ADMIN_CNIC || "00000-0000000-0").trim();
+  const cnic = String(process.env.TRANSPAK_DEMO_ADMIN_CNIC || "35202-DEMO327-1").trim();
   const fullName = String(process.env.TRANSPAK_DEMO_ADMIN_NAME || "Demo Admin").trim();
 
   try {
@@ -139,6 +139,16 @@ async function ensureTranspakDemoAdmin() {
       cnicNumber: cnic,
       fullName
     });
+    await userRepo.updatePasswordHashByEmail(email, passwordHash);
+    await userRepo.setVerifiedByEmail(email, true);
+    await query(
+      `UPDATE users
+          SET is_profile_complete = true,
+              active_role = 'admin',
+              updated_at = now()
+        WHERE lower(trim(email)) = lower(trim($1))`,
+      [email]
+    );
     console.log("[demo] demo admin ensured:", email);
   } catch (err) {
     console.error("TransPak: ensureTranspakDemoAdmin failed:", err.message || err);

@@ -10,6 +10,7 @@ const {
   markGpsWritten,
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
+const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 
 function extractToken(socket) {
   const a = socket.handshake.auth;
@@ -146,6 +147,7 @@ module.exports = function registerSocketHandlers(io) {
           return;
         }
         markGpsWritten(load.id);
+        await appendShipmentLocationLog(load.id, lat, lng);
 
         const updatePayload = await buildTrackingUpdatePayload(load.id, lat, lng);
         if (!updatePayload) {

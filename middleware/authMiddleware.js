@@ -30,11 +30,18 @@ async function protect(req, res, next) {
       return sendError(res, 403, "Please verify your email before using the app.", null, "EMAIL_NOT_VERIFIED");
     }
 
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    const dbRole = user.activeRole ? String(user.activeRole).trim().toLowerCase() : null;
+    const tokenRole =
+      decoded.activeRole != null ? String(decoded.activeRole).trim().toLowerCase() : null;
+    const activeRole =
+      dbRole || (tokenRole && roles.includes(tokenRole) ? tokenRole : null);
+
     req.user = user;
     req.auth = {
       userId: String(user.id),
-      roles: Array.isArray(user.roles) ? user.roles : [],
-      activeRole: user.activeRole || null
+      roles,
+      activeRole: activeRole || null
     };
 
     return next();
@@ -67,8 +74,6 @@ function requireAnyRole(rolesList) {
 function requireActiveRole(...allowed) {
   const list = allowed.flat();
   return (req, res, next) => {
-    const roles = req.auth?.roles || [];
-    if (roles.includes("admin")) return next();
     const active = req.auth?.activeRole;
     if (list.includes(active)) return next();
     return sendError(res, 403, "Switch role to continue", null, "WRONG_ACTIVE_ROLE");

@@ -52,8 +52,13 @@ function globalErrorMiddleware(err, req, res, next) {
 
 function registerProcessSafetyHandlers() {
   process.on("unhandledRejection", (reason) => {
+    const msg = reason?.message || String(reason || "");
     // eslint-disable-next-line no-console
-    console.error("[process] unhandledRejection:", reason?.message || reason);
+    console.error("[process] unhandledRejection:", msg);
+    if (String(reason?.code || "") === "42703" || /does not exist/i.test(msg)) {
+      // eslint-disable-next-line no-console
+      console.error("[process] hint: run `npm run db:migrate` in transpak-backend");
+    }
   });
 
   process.on("uncaughtException", (err) => {

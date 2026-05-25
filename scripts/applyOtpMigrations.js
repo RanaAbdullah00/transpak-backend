@@ -19,7 +19,8 @@ const FILES = [
   "011_ratings_space_request.sql",
   "012_carrier_load_dismissals.sql",
   "013_bid_lifecycle_status.sql",
-  "014_bid_counter_round_count.sql"
+  "014_bid_counter_round_count.sql",
+  "015_load_deadline_minutes.sql"
 ];
 
 async function main() {

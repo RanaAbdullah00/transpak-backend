@@ -104,7 +104,7 @@ router.post(
   async (req, res) => {
     const user = await userRepo.findById(req.auth.userId);
     if (!user?.isProfileComplete) {
-      return sendError(res, 403, "Complete your profile to list available space");
+      return sendError(res, 403, "Complete your profile to list available space", null, "PROFILE_INCOMPLETE");
     }
     const {
       origin,
