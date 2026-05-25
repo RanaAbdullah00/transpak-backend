@@ -1,6 +1,6 @@
 const express = require("express");
 const { body, param, validationResult } = require("express-validator");
-const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole, requireRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
@@ -10,8 +10,8 @@ const { notifyUser, notifyLoadPostedToCarriers } = require("../utils/notifyEvent
 const { apiLoadStatus } = require("../utils/bidStateMachine");
 const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
 const { asyncHandler } = require("../utils/asyncHandler");
-const { forbidAdminCommercialMutation } = require("../middleware/sessionGuards");
 const { persistLoadRouteSnapshot } = require("../utils/loadRouteSnapshot");
+const { canReadLoad } = require("../utils/resourceAuth");
 
 const router = express.Router();
 
@@ -44,13 +44,12 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/", protect, requireAnyRole(["carrier", "admin"]), requireActiveRole("carrier"), loadController.listOpen);
+router.get("/", protect, requireRole("carrier"), loadController.listOpen);
 
 router.post(
   "/:id/pass",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid load id"); })()))],
   validate,
   async (req, res) => {
@@ -72,7 +71,7 @@ router.post(
   }
 );
 
-router.get("/mine", protect, requireAnyRole(["shipper", "admin"]), requireActiveRole("shipper"), async (req, res) => {
+router.get("/mine", protect, requireRole("shipper"), async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT l.id, l.code, l.cargo, l.origin, l.destination, l.weight, l.vehicle_type AS "vehicleType",
@@ -209,8 +208,7 @@ async function deleteOwnOpenLoad(req, res) {
 router.patch(
   "/:id",
   protect,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   updateLoadValidators,
   validate,
   updateLoad
@@ -219,14 +217,13 @@ router.patch(
 router.delete(
   "/:id",
   protect,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid load id"); })()))],
   validate,
   deleteOwnOpenLoad
 );
 
-router.get("/:id", protect, async (req, res) => {
+router.get("/:id", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
   const id = req.params.id;
   if (!isUuid(id)) return sendError(res, 400, "Invalid load id");
   const { rows } = await query(
@@ -241,11 +238,7 @@ router.get("/:id", protect, async (req, res) => {
   const load = rows[0];
   if (!load) return sendError(res, 404, "Not found");
 
-  const roles = req.auth?.roles || [];
-  const isAdmin = roles.includes("admin");
-  const isOwner = String(load.shipperId) === String(req.auth.userId);
-  const isAssignedCarrier = load.assignedCarrierId && String(load.assignedCarrierId) === String(req.auth.userId);
-  if (!isAdmin && !isOwner && !isAssignedCarrier) return sendError(res, 403, "Forbidden");
+  if (!canReadLoad(load, req.auth)) return sendError(res, 403, "Forbidden");
   return sendSuccess(res, 200, load);
 });
 
@@ -428,9 +421,7 @@ const createLoadValidators = [
 router.post(
   "/",
   protect,
-  forbidAdminCommercialMutation,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   createLoadValidators,
   validate,
   asyncHandler(createLoad)
@@ -438,9 +429,7 @@ router.post(
 router.post(
   "/create",
   protect,
-  forbidAdminCommercialMutation,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   createLoadValidators,
   validate,
   asyncHandler(createLoad)

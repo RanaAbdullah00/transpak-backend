@@ -1,6 +1,7 @@
 const express = require("express");
 const { body } = require("express-validator");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole } = require("../middleware/authMiddleware");
+const COMMERCIAL_ROLES = ["shipper", "carrier", "admin"];
 const { uploadProfileImages } = require("../middleware/uploadProfileImages");
 const { getProfile, updateProfile, getProfileStatus, getActivitySnapshot } = require("../controllers/profileController");
 const { getPublicProfile } = require("../controllers/publicProfileController");
@@ -19,14 +20,15 @@ function handleProfileUpload(req, res, next) {
   });
 }
 
-router.get("/", protect, getProfile);
-router.get("/status", protect, getProfileStatus);
-router.get("/activity-snapshot", protect, getActivitySnapshot);
-router.get("/:id", protect, getPublicProfile);
+router.get("/", protect, requireAnyRole(COMMERCIAL_ROLES), getProfile);
+router.get("/status", protect, requireAnyRole(COMMERCIAL_ROLES), getProfileStatus);
+router.get("/activity-snapshot", protect, requireAnyRole(COMMERCIAL_ROLES), getActivitySnapshot);
+router.get("/:id", protect, requireAnyRole(COMMERCIAL_ROLES), getPublicProfile);
 
 router.put(
   "/update",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   handleProfileUpload,
   [
     body("full_name")

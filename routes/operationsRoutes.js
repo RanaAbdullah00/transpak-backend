@@ -1,18 +1,27 @@
 const express = require("express");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole, validateViewAs } = require("../middleware/authMiddleware");
+const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 
 const router = express.Router();
 
-router.get("/snapshot", protect, async (req, res) => {
+router.get(
+  "/snapshot",
+  protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
+  validateViewAs(),
+  async (req, res) => {
   try {
     const uid = req.auth.userId;
     const roles = req.auth?.roles || [];
-    const active = req.auth?.activeRole;
-    const out = { role: active, shipper: null, carrier: null };
+    const viewAs = resolveCommercialViewRole(roles, req.commercialView);
+    const out = { shipper: null, carrier: null };
 
-    if (roles.includes("shipper") && (active === "shipper" || !active)) {
+    const includeShipper = viewAs ? viewAs === "shipper" : roles.includes("shipper");
+    const includeCarrier = viewAs ? viewAs === "carrier" : roles.includes("carrier");
+
+    if (includeShipper) {
       const [{ rows: loads }, { rows: bids }, { rows: shipments }] = await Promise.all([
         query(
           `SELECT COUNT(*) FILTER (WHERE status = 'open')::int AS open,
@@ -41,7 +50,7 @@ router.get("/snapshot", protect, async (req, res) => {
       };
     }
 
-    if (roles.includes("carrier") && active === "carrier") {
+    if (includeCarrier) {
       const [{ rows: bids }, { rows: space }, { rows: requests }] = await Promise.all([
         query(
           `SELECT COUNT(*) FILTER (WHERE status IN ('pending_shipper_confirmation','counter_offered','pending','suggested'))::int AS active,
@@ -75,6 +84,7 @@ router.get("/snapshot", protect, async (req, res) => {
   } catch (err) {
     return sendError(res, 500, err.message || "Server error");
   }
-});
+}
+);
 
 module.exports = router;

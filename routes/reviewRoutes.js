@@ -1,6 +1,7 @@
 const express = require("express");
 const { body, param } = require("express-validator");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole } = require("../middleware/authMiddleware");
+const COMMERCIAL_ROLES = ["shipper", "carrier", "admin"];
 const { validationResult } = require("express-validator");
 const { sendError, sendSuccess } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
@@ -22,7 +23,7 @@ function validate(req, res, next) {
   next();
 }
 
-router.get("/pending", protect, async (req, res) => {
+router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, res) => {
   try {
     const uid = String(req.auth.userId);
     const pending = [];
@@ -102,6 +103,7 @@ router.get("/pending", protect, async (req, res) => {
 router.post(
   "/",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   [
     body("toUser").custom((v) => (isUuid(v) ? true : (() => { throw new Error("toUser is required"); })())),
     body("rating").isInt({ min: 1, max: 5 }).withMessage("rating must be 1–5"),
@@ -218,6 +220,7 @@ router.post(
 router.get(
   "/:userId",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   [param("userId").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid userId"); })()))],
   validate,
   async (req, res) => {

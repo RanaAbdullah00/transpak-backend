@@ -391,7 +391,9 @@ async function profile(req, res) {
   try {
     const user = await userRepo.findById(req.auth.userId);
     if (!user) return sendError(res, 401, "Unauthorized");
-    return sendSuccess(res, 200, authDataNoToken(user), "OK");
+    const sessionUser = await resolveAuthUserForSession(user);
+    const token = signToken(sessionUser);
+    return sendSuccess(res, 200, authData(sessionUser, token), "OK");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[auth.profile]", err?.message || err);
@@ -411,18 +413,11 @@ async function updateActiveRole(req, res) {
   let user = await userRepo.findById(req.auth.userId);
   if (!user) return sendError(res, 401, "Unauthorized");
 
-  if (!userRepo.hasRole(user, next)) {
-    if (next === "admin") {
-      return sendError(res, 403, "Role not available for this account");
-    }
-    const appended = await userRepo.addRole(req.auth.userId, next);
-    if (!appended) {
-      return sendError(res, 500, "Could not add role to account");
-    }
-    user = appended;
+  if (next === "admin" && !userRepo.hasRole(user, "admin")) {
+    return sendError(res, 403, "Role not available for this account");
   }
 
-  const updated = await userRepo.setActiveRole(req.auth.userId, next);
+  const updated = await userRepo.switchActiveRole(req.auth.userId, next);
   if (!updated) {
     return sendError(res, 500, "Role update failed");
   }
@@ -451,13 +446,15 @@ async function addRoleToAccount(req, res) {
     if (!user) return sendError(res, 401, "Unauthorized");
 
     if (userRepo.hasRole(user, next)) {
-      return sendSuccess(res, 200, { roles: user.roles }, "Role already on account");
+      const token = signToken(user);
+      return sendSuccess(res, 200, authData(user, token), "Role already on account");
     }
 
     user = await userRepo.addRole(user.id, next);
     if (!user) return sendError(res, 500, "Could not add role");
 
-    return sendSuccess(res, 200, { roles: user.roles }, "Role added successfully");
+    const token = signToken(user);
+    return sendSuccess(res, 200, authData(user, token), "Role added successfully");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[auth.addRole]", err?.message || err);

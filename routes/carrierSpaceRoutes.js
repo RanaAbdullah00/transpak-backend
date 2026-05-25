@@ -1,10 +1,11 @@
 const express = require("express");
 const { body, param, query, validationResult } = require("express-validator");
-const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole, requireRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query: dbQuery } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
 const { notifyUser } = require("../utils/notifyEvent");
+const { hasAdminRole } = require("../utils/resourceAuth");
 
 const router = express.Router();
 
@@ -67,7 +68,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
   return sendSuccess(res, 200, rows);
 });
 
-router.get("/mine", protect, requireAnyRole(["carrier", "admin"]), requireActiveRole("carrier"), async (req, res) => {
+router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
   const { rows } = await dbQuery(
     `SELECT id, carrier_id AS "carrierId", origin, destination,
             truck_capacity_kg AS "truckCapacityKg", remaining_space_kg AS "remainingSpaceKg",
@@ -97,8 +98,7 @@ const createValidators = [
 router.post(
   "/",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   createValidators,
   validate,
   async (req, res) => {
@@ -156,8 +156,7 @@ router.post(
 router.patch(
   "/:id",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [
     param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })())),
     body("remainingSpaceKg").optional().toFloat().isFloat({ min: 0 }),
@@ -169,7 +168,7 @@ router.patch(
     const { rows: found } = await dbQuery(`SELECT * FROM carrier_space_listings WHERE id = $1`, [id]);
     const row = found[0];
     if (!row) return sendError(res, 404, "Not found");
-    if (String(row.carrier_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+    if (String(row.carrier_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
       return sendError(res, 403, "Forbidden");
     }
     const rem = req.body.remainingSpaceKg != null ? Number(req.body.remainingSpaceKg) : null;
@@ -195,8 +194,7 @@ router.patch(
 router.delete(
   "/:id",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
   async (req, res) => {

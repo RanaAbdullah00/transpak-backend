@@ -1,6 +1,7 @@
 const express = require("express");
 const { body, param, query, validationResult } = require("express-validator");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole } = require("../middleware/authMiddleware");
+const COMMERCIAL_ROLES = ["shipper", "carrier", "admin"];
 const { sendError, sendSuccess } = require("../utils/apiResponse");
 const { query: db } = require("../db/pool");
 const realtimeHub = require("../services/realtimeHub");
@@ -28,6 +29,7 @@ function handleVal(req, res, next) {
 router.post(
   "/conversations/open",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   body("peerUserId")
     .custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid peerUserId"); })()))
     .bail(),
@@ -57,7 +59,7 @@ router.post(
   }
 );
 
-router.get("/conversations", protect, async (req, res) => {
+router.get("/conversations", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, res) => {
   const uid = String(req.auth.userId);
   const { rows } = await db(
     `SELECT c.id, c.load_id AS "loadId", c.user_a_id AS "userAId", c.user_b_id AS "userBId",
@@ -81,6 +83,7 @@ router.get("/conversations", protect, async (req, res) => {
 router.get(
   "/conversations/:id/messages",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid conversation id"); })())),
   query("before").optional().custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid before id"); })())),
   query("limit").optional().isInt({ min: 1, max: 100 }),
@@ -123,6 +126,7 @@ router.get(
 router.post(
   "/conversations/:id/messages",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid conversation id"); })())),
   body("body").optional().isString(),
   body("clientMessageId").optional().trim().isLength({ max: 128 }),
@@ -194,6 +198,7 @@ router.post(
 router.post(
   "/conversations/:id/read",
   protect,
+  requireAnyRole(COMMERCIAL_ROLES),
   param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid conversation id"); })())),
   body("upToMessageId").optional().custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid upToMessageId"); })())),
   handleVal,

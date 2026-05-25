@@ -1,6 +1,6 @@
 const express = require("express");
 const { body, validationResult } = require("express-validator");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { estimateDistanceKm, calculateFareBreakdown } = require("../utils/loadFare");
 const cities = require("../data/pakistanCities.json");
@@ -15,7 +15,7 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/cities", protect, (req, res) => {
+router.get("/cities", protect, requireAnyRole(["shipper", "carrier", "admin"]), (req, res) => {
   const q = String(req.query?.q || "")
     .trim()
     .toLowerCase();
@@ -27,6 +27,7 @@ router.get("/cities", protect, (req, res) => {
 router.post(
   "/estimate",
   protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
   [
     body("origin").trim().isLength({ min: 2, max: 120 }),
     body("destination").trim().isLength({ min: 2, max: 120 }),

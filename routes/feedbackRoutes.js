@@ -1,6 +1,6 @@
 const express = require("express");
 const { body, validationResult } = require("express-validator");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 const { asyncHandler } = require("../utils/asyncHandler");
@@ -20,6 +20,7 @@ function validate(req, res, next) {
 router.post(
   "/",
   protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
   [
     body("subject").trim().isLength({ min: 1, max: 120 }).withMessage("subject is required"),
     body("message").trim().isLength({ min: 1, max: 2000 }).withMessage("message is required")

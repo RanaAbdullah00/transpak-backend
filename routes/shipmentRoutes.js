@@ -1,6 +1,6 @@
 const express = require("express");
 const { body } = require("express-validator");
-const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole, requireRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { normalizeShipmentStatus, validateShipmentTransition } = require("../utils/shipmentStatus");
 const {
@@ -24,8 +24,8 @@ const {
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
 const { shipmentsRouteLimiter } = require("../middleware/apiRateLimit");
-const { forbidAdminCommercialMutation } = require("../middleware/sessionGuards");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
+const { hasAdminRole } = require("../utils/resourceAuth");
 
 const router = express.Router();
 router.use(shipmentsRouteLimiter);
@@ -67,10 +67,8 @@ function toTrackResponse(req, doc) {
   return { ...raw, tracking };
 }
 
-function assertTrackAccessOrThrow(load, auth, { allowCarrierStatusWrite = false } = {}) {
-  const roles = auth?.roles || [];
-  const isAdmin = roles.includes("admin");
-  if (isAdmin) return;
+function assertTrackAccessOrThrow(load, auth) {
+  if (hasAdminRole(auth)) return;
 
   const uid = String(auth?.userId || "");
   const isShipper = String(load?.shipper_id || "") === uid;
@@ -164,7 +162,7 @@ router.get(
     try {
       const load = await resolveLoadForRef(req.params.id);
       if (!load) return sendError(res, 404, "Not found");
-      assertTrackAccessOrThrow(load, req.auth, { allowCarrierStatusWrite: false });
+      assertTrackAccessOrThrow(load, req.auth);
 
       const { rows: loadRows } = await query(
         `SELECT origin, destination FROM loads WHERE id = $1`,
@@ -196,8 +194,7 @@ router.get(
 router.put(
   "/:id/status",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   shipmentIdParam,
   shipmentStatusPutValidators,
   handleValidationErrors,
@@ -205,7 +202,7 @@ router.put(
     try {
       const load = await resolveLoadForRef(req.params.id);
       if (!load) return sendError(res, 404, "Not found");
-      assertTrackAccessOrThrow(load, req.auth, { allowCarrierStatusWrite: true });
+      assertTrackAccessOrThrow(load, req.auth);
 
       const { status } = req.body || {};
       const nextRaw = String(status || "").trim();
@@ -300,9 +297,7 @@ router.put(
 router.put(
   "/:id/location",
   protect,
-  forbidAdminCommercialMutation,
-  requireAnyRole(["carrier"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   shipmentIdParam,
   [
     body("lat").isFloat({ min: -90, max: 90 }).withMessage("Invalid lat"),
@@ -313,7 +308,7 @@ router.put(
     try {
       const load = await resolveLoadForRef(req.params.id);
       if (!load) return sendError(res, 404, "Not found");
-      assertTrackAccessOrThrow(load, req.auth, { allowCarrierStatusWrite: true });
+      assertTrackAccessOrThrow(load, req.auth);
 
       const carrierErr = assertAssignedCarrierForGps(load, req.auth.userId);
       if (carrierErr) throw carrierErr;

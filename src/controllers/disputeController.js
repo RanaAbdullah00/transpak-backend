@@ -1,4 +1,5 @@
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
+const { hasAdminRole } = require("../../utils/resourceAuth");
 const { query } = require("../../db/pool");
 
 function isUuid(value) {
@@ -23,10 +24,9 @@ async function create(req, res) {
     if (!row) return sendError(res, 404, "Shipment not found");
 
     const uid = String(req.auth.userId);
-    const isAdmin = (req.auth.roles || []).includes("admin");
     const isShipper = String(row.shipper_id) === uid;
     const isCarrier = String(row.assigned_carrier_id || "") === uid;
-    if (!isAdmin && !isShipper && !isCarrier) return sendError(res, 403, "Forbidden");
+    if (!hasAdminRole(req.auth) && !isShipper && !isCarrier) return sendError(res, 403, "Forbidden");
 
     const { rows: existing } = await query(
       `SELECT id FROM disputes WHERE shipment_id = $1 AND raised_by = $2 AND status = 'open' LIMIT 1`,

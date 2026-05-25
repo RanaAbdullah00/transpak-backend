@@ -6,6 +6,8 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { uploadImageFile } = require("../src/services/cloudinaryService");
 const { cleanupUploadedFiles } = require("../middleware/uploadProfileImages");
 const { safeDestroyReplacedUrl } = require("../utils/cloudinaryUrl");
+const { signToken } = require("../utils/jwt");
+const { authData } = require("../utils/authPayload");
 
 const CNIC_REGEX = /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/;
 const UPLOAD_FAIL_USER_MSG = "File upload failed, please try again";
@@ -253,15 +255,19 @@ async function updateProfile(req, res) {
       return sendError(res, 500, "Profile update failed");
     }
 
+    const token = signToken(finalUser);
     const payload = {
-      full_name: finalUser.fullName,
-      phone: finalUser.phone,
-      email: finalUser.email,
-      cnic_number: finalUser.cnicNumber,
-      cnic_image: finalUser.cnicImage,
-      cnic_image_back: finalUser.cnicImageBack,
-      profile_image: finalUser.profileImage,
-      is_profile_complete: finalUser.isProfileComplete
+      ...authData(finalUser, token),
+      profile: {
+        full_name: finalUser.fullName,
+        phone: finalUser.phone,
+        email: finalUser.email,
+        cnic_number: finalUser.cnicNumber,
+        cnic_image: finalUser.cnicImage,
+        cnic_image_back: finalUser.cnicImageBack,
+        profile_image: finalUser.profileImage,
+        is_profile_complete: finalUser.isProfileComplete
+      }
     };
 
     if (uploadFailures.length) {

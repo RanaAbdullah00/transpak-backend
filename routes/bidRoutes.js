@@ -1,6 +1,7 @@
 const express = require("express");
 const { body, param, validationResult } = require("express-validator");
-const { protect, requireAnyRole, requireActiveRole } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole, requireRole, validateViewAs } = require("../middleware/authMiddleware");
+const { hasAdminRole } = require("../utils/resourceAuth");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { getPool, query } = require("../db/pool");
 const {
@@ -16,8 +17,7 @@ const {
 const { notifyUser } = require("../utils/notifyEvent");
 const { isBiddingOpen } = require("../utils/loadDeadline");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
-const { forbidAdminCommercialMutation } = require("../middleware/sessionGuards");
-
+const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
 const router = express.Router();
 
 function isUuid(value) {
@@ -36,24 +36,16 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), validateViewAs(), async (req, res) => {
   const roles = req.auth?.roles || [];
-  const active = req.auth?.activeRole;
-  const isAdmin = roles.includes("admin");
-  const viewAs =
-    active === "shipper" || active === "carrier"
-      ? active
-      : roles.includes("shipper")
-      ? "shipper"
-      : roles.includes("carrier")
-      ? "carrier"
-      : null;
+  const isAdmin = hasAdminRole(req.auth);
+  const viewAs = resolveCommercialViewRole(roles, req.commercialView);
 
   const loadId = req.query?.loadId ? String(req.query.loadId).trim() : "";
   const adminLoadFilter = loadId && isUuid(loadId) ? "AND b.load_id = $1" : "";
   const shipperLoadClause = loadId && isUuid(loadId) ? "AND b.load_id = $2" : "";
 
-  if (isAdmin) {
+  if (isAdmin && !viewAs) {
     const adminParams = adminLoadFilter ? [loadId] : [];
     const { rows } = await query(
       `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
@@ -70,7 +62,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
     return sendSuccess(res, 200, rows);
   }
 
-  if (active === "carrier") {
+  if (viewAs === "carrier") {
     const { rows } = await query(
       `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
               b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
@@ -110,11 +102,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
 });
 
 // Frontend convenience: /bids/mine for carriers
-router.get("/mine", protect, requireAnyRole(["carrier", "admin"]), async (req, res) => {
-  const roles = req.auth?.roles || [];
-  if (!roles.includes("carrier") && !roles.includes("admin")) {
-    return sendError(res, 403, "Carrier role required");
-  }
+router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
   const { rows } = await query(
     `SELECT b.id, b.load_id AS "loadId", l.code AS "loadCode", b.carrier_id AS "carrierId", b.amount,
             b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
@@ -134,10 +122,8 @@ router.get("/mine", protect, requireAnyRole(["carrier", "admin"]), async (req, r
 router.post(
   "/",
   protect,
-  forbidAdminCommercialMutation,
   bidsRouteLimiter,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [
     body("loadId").custom((v) => (isUuid(v) ? true : (() => { throw new Error("loadId is required"); })())),
     body("amount").toFloat().isFloat({ gt: 0 }).withMessage("amount must be greater than 0")
@@ -220,8 +206,7 @@ router.post(
 router.put(
   "/:id/reject",
   protect,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })()))],
   validate,
   async (req, res) => {
@@ -234,7 +219,7 @@ router.put(
     );
     const bid = bidRows[0];
     if (!bid) return sendError(res, 404, "Not found");
-    if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+    if (String(bid.shipper_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
       return sendError(res, 403, "Forbidden");
     }
     assertBidTransition(bid.status, BID.REJECTED);
@@ -257,8 +242,7 @@ router.put(
 router.put(
   "/:id/suggest",
   protect,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   [
     param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })())),
     body("amount").toFloat().isFloat({ gt: 0 }).withMessage("amount must be greater than 0")
@@ -276,7 +260,7 @@ router.put(
       );
       const bid = bidRows[0];
       if (!bid) return sendError(res, 404, "Not found");
-      if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+      if (String(bid.shipper_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
         return sendError(res, 403, "Forbidden");
       }
       assertBidTransition(bid.status, BID.COUNTER);
@@ -313,8 +297,7 @@ router.put(
 router.put(
   "/:id/suggest-carrier",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [
     param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })())),
     body("amount").toFloat().isFloat({ gt: 0 }).withMessage("amount must be greater than 0")
@@ -332,7 +315,7 @@ router.put(
       );
       const bid = bidRows[0];
       if (!bid) return sendError(res, 404, "Not found", null, "NOT_FOUND");
-      if (String(bid.carrier_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+      if (String(bid.carrier_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
         return sendError(res, 403, "Forbidden", null, "FORBIDDEN");
       }
       const st = normalizeBidStatus(bid.status);
@@ -380,8 +363,7 @@ router.put(
 router.put(
   "/:id/accept-suggestion",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })()))],
   validate,
   async (req, res) => {
@@ -420,8 +402,7 @@ router.put(
 router.put(
   "/:id/reject-suggestion",
   protect,
-  requireAnyRole(["carrier", "admin"]),
-  requireActiveRole("carrier"),
+  requireRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })()))],
   validate,
   async (req, res) => {
@@ -441,8 +422,7 @@ router.put(
 router.put(
   "/:id/accept",
   protect,
-  requireAnyRole(["shipper", "admin"]),
-  requireActiveRole("shipper"),
+  requireRole("shipper"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })()))],
   validate,
   async (req, res) => {
@@ -488,7 +468,7 @@ router.put(
         await client.query("ROLLBACK");
         return sendError(res, 409, "Bid is not pending");
       }
-      if (String(bid.shipper_id) !== String(req.auth.userId) && !(req.auth.roles || []).includes("admin")) {
+      if (String(bid.shipper_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
         await client.query("ROLLBACK");
         return sendError(res, 403, "Forbidden");
       }

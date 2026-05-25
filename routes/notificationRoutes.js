@@ -1,8 +1,9 @@
 const express = require("express");
 const { body, param, validationResult } = require("express-validator");
-const { protect } = require("../middleware/authMiddleware");
+const { protect, requireAnyRole } = require("../middleware/authMiddleware");
 const { sendError, sendSuccess } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
+const { notificationScopeClause } = require("../utils/notificationScope");
 
 const router = express.Router();
 
@@ -22,25 +23,32 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/unread-count", protect, async (req, res) => {
+function scopedParams(auth) {
+  const scope = notificationScopeClause(auth);
+  return { scope, params: [auth.userId, ...scope.params] };
+}
+
+router.get("/unread-count", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+  const { scope, params } = scopedParams(req.auth);
   const { rows } = await query(
     `SELECT COUNT(*)::int AS count
      FROM notifications
-     WHERE receiver_id = $1 AND read = false`,
-    [req.auth.userId]
+     WHERE receiver_id = $1 AND read = false AND ${scope.sql}`,
+    params
   );
   return sendSuccess(res, 200, { count: rows[0]?.count || 0 });
 });
 
-router.get("/", protect, async (req, res) => {
+router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+  const { scope, params } = scopedParams(req.auth);
   const { rows } = await query(
     `SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", role_type AS "roleType",
             title, message, read, created_at AS "createdAt"
      FROM notifications
-     WHERE receiver_id = $1
+     WHERE receiver_id = $1 AND ${scope.sql}
      ORDER BY created_at DESC
      LIMIT 200`,
-    [req.auth.userId]
+    params
   );
   const mapped = rows.map((r) => ({
     ...r,
@@ -52,6 +60,7 @@ router.get("/", protect, async (req, res) => {
 router.post(
   "/",
   protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
   [
     body("title").trim().isLength({ min: 1, max: 120 }).withMessage("title is required"),
     body("message").trim().isLength({ min: 1, max: 2000 }).withMessage("message is required"),
@@ -67,15 +76,21 @@ router.post(
       if (!["shipper", "carrier", "admin"].includes(rt)) {
         return sendError(res, 400, "Invalid roleType", { fields: ["roleType"] });
       }
+      const roles = req.auth?.roles || [];
+      if (!roles.includes(rt)) {
+        return sendError(res, 403, "Forbidden", null, "FORBIDDEN_ROLE_TYPE");
+      }
       roleType = rt;
     }
+    const { scope, params } = scopedParams(req.auth);
     const { rows: existing } = await query(
       `SELECT id, title, message, role_type AS "roleType", read, created_at AS "createdAt"
        FROM notifications
        WHERE receiver_id = $1 AND title = $2 AND message = $3
          AND created_at > now() - interval '2 minutes'
+         AND ${scope.sql}
        LIMIT 1`,
-      [req.auth.userId, title, message]
+      [req.auth.userId, title, message, ...scope.params]
     );
     if (existing[0]) {
       return sendSuccess(res, 200, existing[0], "OK");
@@ -93,23 +108,29 @@ router.post(
 router.patch(
   "/:id/read",
   protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid notification id"); })()))],
   validate,
   async (req, res) => {
+    const { scope, params } = scopedParams(req.auth);
     const { rows } = await query(
       `UPDATE notifications
        SET read = true
-       WHERE id = $1 AND receiver_id = $2
+       WHERE id = $1 AND receiver_id = $2 AND ${scope.sql}
        RETURNING id, read`,
-      [req.params.id, req.auth.userId]
+      [req.params.id, req.auth.userId, ...scope.params]
     );
     if (!rows[0]) return sendError(res, 404, "Not found");
     return sendSuccess(res, 200, { ok: true });
   }
 );
 
-router.patch("/read-all", protect, async (req, res) => {
-  await query(`UPDATE notifications SET read = true WHERE receiver_id = $1 AND read = false`, [req.auth.userId]);
+router.patch("/read-all", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+  const { scope, params } = scopedParams(req.auth);
+  await query(
+    `UPDATE notifications SET read = true WHERE receiver_id = $1 AND read = false AND ${scope.sql}`,
+    params
+  );
   return sendSuccess(res, 200, { ok: true });
 });
 

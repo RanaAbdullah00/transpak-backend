@@ -15,8 +15,7 @@ function getJwtExpiresIn() {
 }
 
 /**
- * Sign a JWT for a user.
- * Payload includes roles[] and activeRole (current workspace role).
+ * Sign a JWT for a user (identity snapshot only — authorization uses DB via requireAuth).
  */
 function signToken(user) {
   const secret = getJwtSecret();
@@ -25,9 +24,7 @@ function signToken(user) {
   const idStr = String(userId);
   const payload = {
     sub: idStr,
-    id: idStr,
-    roles: Array.isArray(user.roles) ? user.roles : [],
-    activeRole: user.activeRole
+    id: idStr
   };
 
   return jwt.sign(payload, secret, {

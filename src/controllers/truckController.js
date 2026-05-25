@@ -1,5 +1,6 @@
 const { body, param, validationResult } = require("express-validator");
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
+const { hasAdminRole } = require("../../utils/resourceAuth");
 const { query } = require("../../db/pool");
 const { safeDestroyReplacedUrl } = require("../../utils/cloudinaryUrl");
 const { isAllowedImageUrl } = require("../../utils/imageUrl");
@@ -110,9 +111,9 @@ async function update(req, res) {
     );
     const truck = found[0];
     if (!truck) return sendError(res, 404, "Not found");
-    const roles = req.auth?.roles || [];
-    const isAdmin = roles.includes("admin");
-    if (!isAdmin && String(truck.user_id) !== String(req.auth.userId)) return sendError(res, 403, "Forbidden");
+    if (!hasAdminRole(req.auth) && String(truck.user_id) !== String(req.auth.userId)) {
+      return sendError(res, 403, "Forbidden");
+    }
 
     const { engineNumber, truckType, capacity, licensePlate, truckCardFrontImage, truckCardBackImage } = req.body || {};
     if (truckCardFrontImage != null && !isAllowedImageUrl(truckCardFrontImage)) {
