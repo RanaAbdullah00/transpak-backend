@@ -14,6 +14,8 @@ const {
   validateShipmentTransition
 } = require("../utils/shipmentStatus");
 const { asyncHandler } = require("../utils/asyncHandler");
+const { writeAudit } = require("../utils/auditLog");
+const realtimeHub = require("../services/realtimeHub");
 
 const router = express.Router();
 
@@ -46,7 +48,14 @@ const demoVideoUpload = multer({
       cb(null, `demo_video_${Date.now()}${ext}`);
     }
   }),
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || "").toLowerCase();
+    if (!["video/mp4", "video/webm", "video/quicktime"].includes(mime)) {
+      return cb(new Error("Only MP4, WebM, or MOV videos are allowed"));
+    }
+    return cb(null, true);
+  }
 });
 
 router.post("/demo-video", demoVideoUpload.single("video"), uploadDemoVideo);
@@ -102,6 +111,144 @@ router.get("/stats", async (req, res) => {
     return sendError(res, 500, err.message || "Server error");
   }
 });
+
+router.get(
+  "/dashboard/live",
+  asyncHandler(async (req, res) => {
+    const { runMarketplaceExpiryProcessor } = require("../utils/loadExpiry");
+    await runMarketplaceExpiryProcessor().catch(() => ({ loadsExpired: 0, bidsExpired: 0 }));
+
+    const count = async (sql, params = []) => {
+      try {
+        const { rows } = await query(sql, params);
+        return rows[0]?.c ?? 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const serverStartedAt = global.__TRANSPAK_SERVER_STARTED_AT || new Date().toISOString();
+    const uptimeSeconds = Math.floor(process.uptime());
+
+    const [
+      totalUsers,
+      totalLoads,
+      openLoads,
+      completedShipments,
+      totalBids,
+      activeShipments,
+      openDisputes,
+      pendingVerification,
+      shipperAccounts,
+      carrierAccounts,
+      incompleteProfiles,
+      registeredTrucks,
+      notificationsToday,
+      recentLoads,
+      recentBids,
+      recentShipments,
+      recentUsers,
+      recentDisputes,
+      recentNotifications,
+      auditEvents
+    ] = await Promise.all([
+      count(`SELECT COUNT(*)::int AS c FROM users`),
+      count(`SELECT COUNT(*)::int AS c FROM loads`),
+      count(`SELECT COUNT(*)::int AS c FROM loads WHERE status = 'open'`),
+      count(`SELECT COUNT(*)::int AS c FROM shipments WHERE status IN ('delivered','closed')`),
+      count(`SELECT COUNT(*)::int AS c FROM bids`),
+      count(
+        `SELECT COUNT(*)::int AS c FROM shipments WHERE status IN ('booked','pickedup','intransit','delivered')`
+      ),
+      count(`SELECT COUNT(*)::int AS c FROM disputes WHERE status = 'open'`),
+      count(`SELECT COUNT(*)::int AS c FROM users WHERE verified = false AND blocked = false`),
+      count(`SELECT COUNT(*)::int AS c FROM users WHERE 'shipper' = ANY(roles)`),
+      count(`SELECT COUNT(*)::int AS c FROM users WHERE 'carrier' = ANY(roles)`),
+      count(`SELECT COUNT(*)::int AS c FROM users WHERE is_profile_complete = false`),
+      count(`SELECT COUNT(*)::int AS c FROM trucks`),
+      count(
+        `SELECT COUNT(*)::int AS c FROM notifications WHERE created_at >= date_trunc('day', now())`
+      ),
+      query(
+        `SELECT l.id, l.code, l.origin, l.destination, l.status, l.created_at AS "createdAt",
+                COALESCE(u.full_name, u.email) AS "shipperName"
+         FROM loads l
+         JOIN users u ON u.id = l.shipper_id
+         ORDER BY l.created_at DESC LIMIT 12`
+      ).then((r) => r.rows),
+      query(
+        `SELECT b.id, b.amount, b.status, b.created_at AS "createdAt",
+                l.code AS "loadCode",
+                COALESCE(uc.full_name, uc.email) AS "carrierName"
+         FROM bids b
+         JOIN loads l ON l.id = b.load_id
+         JOIN users uc ON uc.id = b.carrier_id
+         ORDER BY b.created_at DESC LIMIT 12`
+      ).then((r) => r.rows),
+      query(
+        `SELECT s.id, s.status, s.updated_at AS "updatedAt", l.code AS "loadCode"
+         FROM shipments s
+         JOIN loads l ON l.id = s.load_id
+         ORDER BY s.updated_at DESC LIMIT 12`
+      ).then((r) => r.rows),
+      query(
+        `SELECT id, COALESCE(full_name, email) AS name, email, roles,
+                is_profile_complete AS "profileComplete", created_at AS "createdAt"
+         FROM users ORDER BY created_at DESC LIMIT 10`
+      ).then((r) => r.rows),
+      query(
+        `SELECT id, load_code AS "loadCode", reason, status, created_at AS "createdAt"
+         FROM disputes ORDER BY created_at DESC LIMIT 8`
+      ).then((r) => r.rows),
+      query(
+        `SELECT id, title, message, role_type AS "roleType", read, created_at AS "createdAt"
+         FROM notifications ORDER BY created_at DESC LIMIT 10`
+      ).then((r) => r.rows),
+      query(
+        `SELECT a.id, a.action, a.target_entity AS "targetEntity", a.target_id AS "targetId",
+                a.metadata, a.created_at AS "createdAt",
+                COALESCE(u.full_name, u.email, 'System') AS "actorName"
+         FROM audit_events a
+         LEFT JOIN users u ON u.id = a.actor_user_id
+         ORDER BY a.created_at DESC
+         LIMIT 25`
+      )
+        .then((r) => r.rows)
+        .catch(() => [])
+    ]);
+
+    return sendSuccess(res, 200, {
+      stats: {
+        totalUsers,
+        totalLoads,
+        openLoads,
+        completedShipments,
+        totalBids,
+        activeShipments,
+        openDisputes,
+        pendingVerification,
+        shipperAccounts,
+        carrierAccounts,
+        incompleteProfiles,
+        registeredTrucks,
+        notificationsToday,
+        generatedAt: new Date().toISOString()
+      },
+      observability: {
+        uptimeSeconds,
+        serverStartedAt,
+        websocketConnections: realtimeHub.getConnectedSocketCount()
+      },
+      recentLoads,
+      recentBids,
+      recentShipments,
+      recentUsers,
+      recentDisputes,
+      recentNotifications,
+      auditEvents
+    });
+  })
+);
 
 router.get(
   "/users",
@@ -297,6 +444,14 @@ router.patch(
       loadStatus = loadRows[0]?.status || loadStatus;
     }
 
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "admin.shipment.status",
+      targetEntity: "shipment",
+      targetId: shipmentId,
+      metadata: { from: current, to: nextStatus, force }
+    });
+
     return sendSuccess(res, 200, {
       ...rows[0],
       loadStatus,
@@ -375,7 +530,13 @@ router.patch(
      RETURNING id, COALESCE(full_name, email) AS name, email, cnic_number AS cnic, roles, blocked, verified`,
     [req.params.id, Boolean(blocked)]
   );
-  if (!rows[0]) return sendError(res, 404, "Not found");
+  if (!rows[0]) return sendError(res, 404, "Not found", null, "NOT_FOUND");
+  void writeAudit({
+    actorUserId: req.auth.userId,
+    action: Boolean(blocked) ? "admin.user.blocked" : "admin.user.unblocked",
+    targetEntity: "user",
+    targetId: req.params.id
+  });
   return sendSuccess(res, 200, { ok: true, user: rows[0] });
 });
 
@@ -394,7 +555,13 @@ router.patch(
      RETURNING id, COALESCE(full_name, email) AS name, email, cnic_number AS cnic, roles, blocked, verified`,
     [req.params.id, Boolean(verified)]
   );
-  if (!rows[0]) return sendError(res, 404, "Not found");
+  if (!rows[0]) return sendError(res, 404, "Not found", null, "NOT_FOUND");
+  void writeAudit({
+    actorUserId: req.auth.userId,
+    action: Boolean(verified) ? "admin.user.verified" : "admin.user.unverified",
+    targetEntity: "user",
+    targetId: req.params.id
+  });
   return sendSuccess(res, 200, { ok: true, user: rows[0] });
 });
 

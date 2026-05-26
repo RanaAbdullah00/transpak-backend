@@ -11,6 +11,7 @@ const { apiLoadStatus } = require("../utils/bidStateMachine");
 const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { persistLoadRouteSnapshot } = require("../utils/loadRouteSnapshot");
+const { writeAudit } = require("../utils/auditLog");
 const { canReadLoad } = require("../utils/resourceAuth");
 
 const router = express.Router();
@@ -362,6 +363,13 @@ async function createLoad(req, res) {
     // eslint-disable-next-line no-console
     console.error("[loads.create] notification dispatch failed:", notifyErr?.message || notifyErr);
   }
+  void writeAudit({
+    actorUserId: req.auth.userId,
+    action: "load.created",
+    targetEntity: "load",
+    targetId: load.id,
+    metadata: { code: load.code, origin: pickupLoc, destination: dropLoc }
+  });
   return sendSuccess(res, 201, load, "Created");
   } catch (err) {
     const pgCode = String(err?.code || "");

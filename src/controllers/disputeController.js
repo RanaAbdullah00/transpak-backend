@@ -1,6 +1,7 @@
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
 const { hasAdminRole } = require("../../utils/resourceAuth");
 const { query } = require("../../db/pool");
+const { writeAudit } = require("../../utils/auditLog");
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
@@ -27,6 +28,13 @@ async function create(req, res) {
     const isShipper = String(row.shipper_id) === uid;
     const isCarrier = String(row.assigned_carrier_id || "") === uid;
     if (!hasAdminRole(req.auth) && !isShipper && !isCarrier) return sendError(res, 403, "Forbidden");
+    if (
+      row.shipper_id &&
+      row.assigned_carrier_id &&
+      String(row.shipper_id) === String(row.assigned_carrier_id)
+    ) {
+      return sendError(res, 409, "Invalid shipment parties for dispute");
+    }
 
     const { rows: existing } = await query(
       `SELECT id FROM disputes WHERE shipment_id = $1 AND raised_by = $2 AND status = 'open' LIMIT 1`,
@@ -40,9 +48,16 @@ async function create(req, res) {
        RETURNING id, shipment_id AS "shipmentId", load_code AS "loadCode", reason, status, created_at AS "createdAt"`,
       [shipmentId, row.load_id, row.load_code, uid, reason]
     );
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "dispute.opened",
+      targetEntity: "dispute",
+      targetId: rows[0].id,
+      metadata: { shipmentId, loadCode: row.load_code }
+    });
     return sendSuccess(res, 201, rows[0]);
   } catch (err) {
-    return sendError(res, 500, err.message || "Server error");
+    return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
   }
 }
 
@@ -82,7 +97,13 @@ async function adminResolve(req, res) {
      RETURNING id`,
     [id]
   );
-  if (!rows[0]) return sendError(res, 404, "Not found");
+  if (!rows[0]) return sendError(res, 404, "Not found", null, "NOT_FOUND");
+  void writeAudit({
+    actorUserId: req.auth.userId,
+    action: "dispute.resolved",
+    targetEntity: "dispute",
+    targetId: id
+  });
   return sendSuccess(res, 200, { ok: true });
 }
 

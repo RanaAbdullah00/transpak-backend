@@ -15,6 +15,7 @@ const {
 const { isDemoAdminEmail } = require("../utils/demoAdmin");
 const { resolveAuthUserForSession } = require("../utils/resolveAuthUser");
 const { isTransientDbError, classifyDbError } = require("../utils/dbErrors");
+const { writeAudit } = require("../utils/auditLog");
 
 async function withDbRetry(fn, attempts = 2) {
   let lastErr;
@@ -63,23 +64,6 @@ async function register(req, res) {
   try {
     const maybeError = validationErrorResponse(req, res);
     if (maybeError) return maybeError;
-
-    const dbg =
-      process.env.NODE_ENV === "development" ||
-      String(process.env.AUTH_DEBUG_REGISTER || "").toLowerCase() === "true";
-    if (dbg) {
-      const { name, email, phone, CNIC, role } = req.body || {};
-      // eslint-disable-next-line no-console
-      console.log("[auth.register] body (redacted)", {
-        name,
-        email,
-        phone,
-        CNIC,
-        role,
-        hasPassword: Boolean(req.body?.password),
-        fileFields: req.file ? [req.file.fieldname] : req.files ? Object.keys(req.files) : []
-      });
-    }
 
     const { name, email, phone, CNIC, password, confirmPassword, role } = req.body;
 
@@ -423,6 +407,13 @@ async function updateActiveRole(req, res) {
   }
 
   const token = signToken(updated);
+  void writeAudit({
+    actorUserId: req.auth.userId,
+    action: "role.switched",
+    targetEntity: "user",
+    targetId: req.auth.userId,
+    metadata: { activeRole: next }
+  });
   return sendSuccess(res, 200, authData(updated, token), "Role updated");
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -450,15 +441,32 @@ async function addRoleToAccount(req, res) {
       return sendSuccess(res, 200, authData(user, token), "Role already on account");
     }
 
+    if (!user.isProfileComplete) {
+      return sendError(
+        res,
+        403,
+        "Complete your current profile before adding another role",
+        null,
+        "PROFILE_INCOMPLETE"
+      );
+    }
+
     user = await userRepo.addRole(user.id, next);
     if (!user) return sendError(res, 500, "Could not add role");
 
     const token = signToken(user);
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "role.added",
+      targetEntity: "user",
+      targetId: user.id,
+      metadata: { role: next }
+    });
     return sendSuccess(res, 200, authData(user, token), "Role added successfully");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[auth.addRole]", err?.message || err);
-    return sendError(res, 500, "Failed to add role");
+    return sendError(res, 500, "Failed to add role", null, "SERVER_ERROR");
   }
 }
 

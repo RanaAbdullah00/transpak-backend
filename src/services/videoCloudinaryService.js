@@ -7,6 +7,17 @@ function assertAllowedVideoMime(mime) {
   }
 }
 
+async function destroyVideoByPublicId(publicId) {
+  if (!publicId) return;
+  ensureConfigured();
+  try {
+    await cloudinary.uploader.destroy(String(publicId), { resource_type: "video", invalidate: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[cloudinary] destroy video skipped:", err?.message || err);
+  }
+}
+
 async function uploadVideoFile({ filePath, mimeType, folder, publicIdPrefix }) {
   ensureConfigured();
   assertAllowedVideoMime(mimeType);
@@ -29,5 +40,6 @@ async function uploadVideoFile({ filePath, mimeType, folder, publicIdPrefix }) {
 }
 
 module.exports = {
-  uploadVideoFile
+  uploadVideoFile,
+  destroyVideoByPublicId
 };

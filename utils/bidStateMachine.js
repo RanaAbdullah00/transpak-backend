@@ -11,9 +11,15 @@ const BID = {
 };
 
 const LOAD = {
+  OPEN: "open",
   POSTED: "open",
+  NEGOTIATING: "open",
+  ACCEPTED: "booked",
   ACTIVE: "booked",
-  COMPLETED: "closed"
+  IN_PROGRESS: "booked",
+  COMPLETED: "closed",
+  EXPIRED: "cancelled",
+  CANCELLED: "cancelled"
 };
 
 const MAX_COUNTER_ROUNDS = Number(process.env.BID_MAX_COUNTER_ROUNDS || 5);
@@ -85,13 +91,24 @@ function apiBidStatus(dbStatus) {
   return String(dbStatus || "").toUpperCase();
 }
 
-function apiLoadStatus(dbStatus) {
+function apiLoadStatus(dbStatus, { biddingOpen = true } = {}) {
   const s = String(dbStatus || "").toLowerCase();
-  if (s === "open") return "POSTED";
-  if (s === "booked") return "ACTIVE";
+  if (s === "open") return biddingOpen === false ? "EXPIRED" : "POSTED";
+  if (s === "booked") return "IN_PROGRESS";
   if (s === "closed") return "COMPLETED";
-  if (s === "cancelled") return "CANCELLED";
+  if (s === "cancelled") return "EXPIRED";
   return String(dbStatus || "").toUpperCase();
+}
+
+/** Map DB bid status to poster-friendly labels */
+function apiBidFlowLabel(dbStatus) {
+  const s = normalizeBidStatus(dbStatus);
+  if (s === BID.PENDING_SHIPPER) return "PENDING";
+  if (s === BID.COUNTER) return "COUNTERED";
+  if (s === BID.ACCEPTED) return "ACCEPTED";
+  if (s === BID.REJECTED) return "REJECTED";
+  if (s === BID.CANCELLED) return "EXPIRED";
+  return apiBidStatus(dbStatus);
 }
 
 module.exports = {
@@ -102,6 +119,7 @@ module.exports = {
   assertBidTransition,
   assertCounterLimit,
   apiBidStatus,
+  apiBidFlowLabel,
   apiLoadStatus,
   normalizeBidStatus,
   isCounterOffered,

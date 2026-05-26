@@ -27,6 +27,17 @@ function getIO() {
   return io;
 }
 
+function getConnectedSocketCount() {
+  if (!io) return 0;
+  try {
+    if (typeof io.engine?.clientsCount === "number") return io.engine.clientsCount;
+    if (io.sockets?.sockets?.size != null) return io.sockets.sockets.size;
+  } catch {
+    // ignore
+  }
+  return 0;
+}
+
 function emitToTracking(refKey, event, payload) {
   if (!io || !refKey) return;
   try {
@@ -39,6 +50,7 @@ function emitToTracking(refKey, event, payload) {
 module.exports = {
   setIO,
   getIO,
+  getConnectedSocketCount,
   emitToUser,
   emitToConversation,
   emitToTracking

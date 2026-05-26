@@ -101,7 +101,10 @@ async function listOpenLoads(filters = {}) {
   }
 
   if (excludeCarrierId) {
-    params.push(String(excludeCarrierId));
+    const uid = String(excludeCarrierId);
+    params.push(uid);
+    clauses.push(`l.shipper_id <> $${i++}`);
+    params.push(uid);
     clauses.push(
       `NOT EXISTS (SELECT 1 FROM carrier_load_dismissals d WHERE d.load_id = l.id AND d.carrier_id = $${i++})`
     );

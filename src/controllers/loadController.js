@@ -1,8 +1,10 @@
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
 const loadRepo = require("../repositories/loadRepo");
+const { runMarketplaceExpiryProcessor } = require("../../utils/loadExpiry");
 
 async function listOpen(req, res) {
   try {
+    await runMarketplaceExpiryProcessor();
     const q = req.query || {};
     const minRaw = q.minPrice !== undefined && String(q.minPrice).trim() !== "" ? String(q.minPrice).trim() : "";
     const maxRaw = q.maxPrice !== undefined && String(q.maxPrice).trim() !== "" ? String(q.maxPrice).trim() : "";

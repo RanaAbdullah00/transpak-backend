@@ -25,6 +25,7 @@ const {
 } = require("../utils/gpsTracking");
 const { shipmentsRouteLimiter } = require("../middleware/apiRateLimit");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
+const { writeAudit } = require("../utils/auditLog");
 const { hasAdminRole } = require("../utils/resourceAuth");
 
 const router = express.Router();
@@ -284,6 +285,24 @@ router.put(
       });
       const room = trackRoomKey(load);
       if (room && core) emitToTracking(room, "tracking:update", core);
+      if (canonical === "booked") {
+        void writeAudit({
+          actorUserId: req.auth.userId,
+          action: "shipment.started",
+          targetEntity: "shipment",
+          targetId: shipment.id,
+          metadata: { loadId: load.id, status: canonical }
+        });
+      }
+      if (canonical === "delivered" || canonical === "closed") {
+        void writeAudit({
+          actorUserId: req.auth.userId,
+          action: "shipment.completed",
+          targetEntity: "shipment",
+          targetId: shipment.id,
+          metadata: { loadId: load.id, status: canonical }
+        });
+      }
       return sendSuccess(res, 200, payload);
     } catch (err) {
       const status = err.statusCode || 500;

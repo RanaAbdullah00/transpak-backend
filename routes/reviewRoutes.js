@@ -147,6 +147,13 @@ router.post(
       if (!["delivered", "closed"].includes(String(ship.status))) {
         return sendError(res, 409, "Reviews are allowed after delivery is completed");
       }
+      if (
+        ship.shipper_id &&
+        ship.assigned_carrier_id &&
+        String(ship.shipper_id) === String(ship.assigned_carrier_id)
+      ) {
+        return sendError(res, 409, "Invalid shipment parties for review");
+      }
       const isParty =
         String(ship.shipper_id) === uid ||
         (ship.assigned_carrier_id && String(ship.assigned_carrier_id) === uid);

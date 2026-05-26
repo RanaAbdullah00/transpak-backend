@@ -41,6 +41,9 @@ router.post(
   async (req, res) => {
     const me = String(req.auth.userId);
     const peer = String(req.body.peerUserId);
+    if (peer === me) {
+      return sendError(res, 400, "Cannot start a chat with yourself");
+    }
     const loadId = req.body.loadId ? String(req.body.loadId) : null;
 
     const userA = me < peer ? me : peer;

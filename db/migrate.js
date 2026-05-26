@@ -17,7 +17,9 @@ const INCREMENTAL_MIGRATIONS = [
   "013_bid_lifecycle_status.sql",
   "014_bid_counter_round_count.sql",
   "015_load_deadline_minutes.sql",
-  "016_load_route_and_location_log.sql"
+  "016_load_route_and_location_log.sql",
+  "017_audit_events.sql",
+  "018_query_performance_indexes.sql"
 ];
 
 async function runMigrations() {

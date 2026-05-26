@@ -23,15 +23,17 @@ function sendSuccess(res, statusCode, data, message = "OK", code = null) {
  * @param {{ errors?: unknown, deliveryReason?: string, deliveryHint?: string }|null} [meta] — merged onto payload (not nested in data)
  */
 function sendError(res, statusCode, message, data = null, code = null, meta = null) {
+  const status = statusCode || 400;
+  const resolvedCode =
+    code ||
+    (status >= 500 ? "SERVER_ERROR" : status === 404 ? "NOT_FOUND" : status === 403 ? "FORBIDDEN" : "ERROR");
   const payload = {
     success: false,
-    message: message || "Error",
-    data: data !== undefined ? data : null
+    code: resolvedCode,
+    message: message || "Request failed",
+    data: data !== undefined ? data : null,
+    error: resolvedCode
   };
-  if (code) {
-    payload.code = code;
-    payload.error = code;
-  }
   if (meta && typeof meta === "object") {
     if (meta.errors !== undefined) payload.errors = meta.errors;
     if (meta.deliveryReason !== undefined) payload.deliveryReason = meta.deliveryReason;
