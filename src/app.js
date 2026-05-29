@@ -4,7 +4,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 
 const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
-const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
+const { BUILD_ID, BUILD_COMMIT, getDeployIdentity, getDeploymentStatus } = require("../utils/deployIdentity");
 
 const { isDatabaseUrlConfigured, query } = require("../db/pool");
 const { isHostedOnPaas } = require("../utils/paasRuntime");
@@ -143,7 +143,9 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     });
   });
 
-  app.get("/health", (req, res) => {
+  app.get("/health", async (req, res) => {
+    const { resolveDatabaseHealth } = require("../utils/healthStatus");
+    const dbHealth = await resolveDatabaseHealth(dbState, process.uptime());
     res.status(200).json({
       ok: true,
       service: "transpak-backend",
@@ -151,9 +153,9 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       build: BUILD_ID,
       commit: BUILD_ID,
       uptime: process.uptime(),
-      db: dbState?.ready ? "ready" : "unavailable",
+      db: dbHealth.db,
       databaseUrlConfigured: isDatabaseUrlConfigured(),
-      schema: dbState?.schema || null
+      schema: dbHealth.schema
     });
   });
 
@@ -162,35 +164,68 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.get("/api/health", async (req, res) => {
     const { resolveDatabaseHealth } = require("../utils/healthStatus");
     const { getOpsSnapshot } = require("../utils/opsTelemetry");
-    const { getDeployIdentity } = require("../utils/deployIdentity");
     const realtimeHub = require("../services/realtimeHub");
     const uptime = process.uptime();
     const dbHealth = await resolveDatabaseHealth(dbState, uptime);
 
-    if (dbHealth.dbReady && !dbState.ready) {
-      dbState.ready = true;
-      dbState.schema = dbHealth.schema;
-      dbState.error = null;
-    } else if (dbHealth.schema) {
-      dbState.schema = dbHealth.schema;
+    if (!dbHealth.booting) {
+      if (dbHealth.dbReady && !dbState.ready) {
+        dbState.ready = true;
+        dbState.schema = dbHealth.schema;
+        dbState.error = null;
+      } else if (dbHealth.schema) {
+        dbState.schema = dbHealth.schema;
+      }
     }
 
     const deploy = { ...getDeployIdentity(), migrationSafe: true };
+    const schema = dbHealth.schema || {
+      ok: false,
+      version: "023",
+      schemaVersion: "023",
+      missing: [],
+      requiredMigration: null,
+      message: null,
+      booting: Boolean(dbHealth.booting)
+    };
+    const deploymentStatus = dbHealth.booting
+      ? "OK"
+      : getDeploymentStatus({
+          dbReady: dbHealth.db === "ready",
+          schemaOk: schema.ok === true
+        });
 
     return res.json({
       success: true,
       message: "ok",
       data: {
-        status: dbHealth.dbReady ? "ok" : dbHealth.db === "connecting" ? "starting" : "degraded",
+        status: dbHealth.booting
+          ? "starting"
+          : dbHealth.dbReady
+            ? "ok"
+            : dbHealth.db === "connecting"
+              ? "starting"
+              : "degraded",
+        healthPhase: dbHealth.healthPhase || (dbHealth.booting ? "booting" : "ready"),
         version: APP_VERSION,
         build: BUILD_ID,
         commit: BUILD_ID,
+        commitFull: BUILD_COMMIT,
         uptime,
-        db: dbHealth.db,
-        dbPing: dbHealth.dbPing,
-        schema: dbHealth.schema,
-        schemaVersion: dbHealth.schemaVersion || "023",
+        db: dbHealth.db || "unavailable",
+        dbPing: dbHealth.dbPing || "skipped",
+        schema: {
+          ok: Boolean(schema.ok),
+          version: schema.version || schema.schemaVersion || "023",
+          schemaVersion: schema.schemaVersion || schema.version || "023",
+          missing: Array.isArray(schema.missing) ? schema.missing : [],
+          requiredMigration: schema.requiredMigration || null,
+          message: schema.message || null,
+          booting: Boolean(schema.booting)
+        },
+        schemaVersion: dbHealth.schemaVersion || schema.version || "023",
         migrationRequired: dbHealth.migrationRequired,
+        deploymentStatus,
         deploy,
         sockets: realtimeHub.getConnectedSocketCount(),
         ops: getOpsSnapshot({ includeRecent: false })

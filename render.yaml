@@ -2,6 +2,8 @@
 # (no parent monorepo). If your repo root is the FYP folder instead, use ../render.yaml there.
 #
 # After first deploy: Shell → npm run db:migrate:otp
+# Enable "Auto-Deploy" from GitHub in Render Dashboard so each push deploys latest commit.
+# RENDER_GIT_COMMIT is injected automatically; startCommand runs migrations once per deploy (migration_lock).
 # CORS_ORIGIN defaults for Cloudflare Pages + Render; override in the Dashboard if needed.
 
 databases:

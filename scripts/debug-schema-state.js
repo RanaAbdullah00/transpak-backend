@@ -37,6 +37,32 @@ async function main() {
   const allMig = await pool.query(`SELECT COUNT(*)::int AS c FROM schema_migrations`);
   console.log("schema_migrations total:", allMig.rows[0]?.c);
 
+  const expected = [
+    "020_truck_fleet_status.sql",
+    "021_matching_engine_indexes.sql",
+    "022_fleet_lifecycle.sql",
+    "023_notifications_realtime.sql",
+    "024_truck_status_constraint_reconcile.sql"
+  ];
+  for (const name of expected) {
+    const { rows } = await pool.query(`SELECT 1 FROM schema_migrations WHERE name = $1`, [name]);
+    console.log(`migration ${name}:`, rows.length ? "applied" : "MISSING");
+  }
+
+  try {
+    const lock = await pool.query(`SELECT * FROM migration_lock WHERE id = 1`);
+    console.log("migration_lock:", lock.rows[0] || "(none)");
+  } catch (e) {
+    console.log("migration_lock:", e.message);
+  }
+
+  const truckCheck = await pool.query(
+    `SELECT conname, pg_get_constraintdef(oid) AS def
+     FROM pg_constraint
+     WHERE conrelid = 'public.trucks'::regclass AND conname = 'trucks_status_check'`
+  );
+  console.log("trucks_status_check:", truckCheck.rows[0]?.def || "(missing)");
+
   const schema = await verifySchema(pool);
   console.log("verifySchema:", JSON.stringify(schema, null, 2));
 

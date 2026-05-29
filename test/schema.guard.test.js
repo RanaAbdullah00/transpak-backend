@@ -47,7 +47,7 @@ describe("Migration system architecture", () => {
     const srv = fs.readFileSync(path.join(root, "src", "server.js"), "utf8");
     assert.ok(srv.includes("needsMigration"));
     assert.ok(!srv.includes("SCHEMA_MIGRATION_REQUIRED"));
-    assert.ok(srv.includes("connectOnce"));
+    assert.ok(srv.includes("startDbInit"));
     assert.ok(!srv.includes("connectWithRetry"));
     assert.ok(!srv.includes("setTimeout(connect"));
   });
@@ -76,5 +76,37 @@ describe("Migration system architecture", () => {
     assert.ok(src.includes("migrationRequired"));
     assert.ok(src.includes("schemaVersion"));
     assert.ok(src.includes("migrationSafe"));
+    assert.ok(src.includes("deploymentStatus"));
+    assert.ok(src.includes("healthPhase"));
+    assert.ok(src.includes("booting"));
+  });
+
+  it("health waits for db bootstrap before final schema", () => {
+    const src = fs.readFileSync(path.join(root, "utils", "healthStatus.js"), "utf8");
+    assert.ok(src.includes("waitForDbInit"));
+    assert.ok(src.includes("bootingHealth"));
+  });
+
+  it("connectDB does not throw on connection failure (safe boot)", () => {
+    const src = fs.readFileSync(path.join(root, "config", "db.js"), "utf8");
+    assert.ok(!src.includes("throw err"));
+  });
+
+  it("deployIdentity resolves git commit with fallback", () => {
+    const src = fs.readFileSync(path.join(root, "utils", "deployIdentity.js"), "utf8");
+    assert.ok(src.includes("git rev-parse HEAD"));
+    assert.ok(src.includes("RENDER_GIT_COMMIT"));
+    assert.ok(src.includes("getDeploymentStatus"));
+    assert.ok(src.includes("commitShort"));
+    assert.ok(src.includes("normalizedCommit"));
+  });
+
+  it("normalizeCommit matches full and short SHA", () => {
+    const { normalizeCommit, commitsMatch } = require(path.join(root, "utils", "normalizeCommit.js"));
+    const full = "a9b37cf578db706a3bfaa87550ac8f55bb5ce8eb";
+    const short = "a9b37cf578db";
+    assert.equal(normalizeCommit(full), normalizeCommit(short));
+    assert.equal(commitsMatch(full, short), true);
+    assert.equal(commitsMatch(full, "deadbeef0000"), false);
   });
 });

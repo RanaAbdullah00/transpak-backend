@@ -7,8 +7,9 @@ const { Server } = require("socket.io");
 const { verifyBrevoApi, validateOutboundMailConfig } = require("../services/emailService");
 const { isDatabaseUrlConfigured, query } = require("../db/pool");
 const connectDB = require("../config/db");
+const { createDbState, startDbInit } = require("../config/dbBootstrap");
 const { getSanitizedDatabaseInfo, formatSanitizedDatabaseLog } = require("../utils/dbSanitizedInfo");
-const { logDeployIdentity, getDeployIdentity, BUILD_ID } = require("../utils/deployIdentity");
+const { logDeployIdentity, BUILD_ID, BUILD_COMMIT } = require("../utils/deployIdentity");
 const realtimeHub = require("../services/realtimeHub");
 const registerSocketHandlers = require("../sockets");
 const { createApp } = require("./app");
@@ -180,10 +181,10 @@ function isDnsNotFound(err) {
 }
 
 async function start() {
-  const dbState = { ready: false, needsMigration: false, error: null, schema: null };
+  const dbState = createDbState();
   let dbNotReadyLogged = false;
 
-  async function connectOnce() {
+  const dbInitPromise = startDbInit(dbState, async () => {
     try {
       await connectDB(dbState);
       if (dbState.ready) {
@@ -219,9 +220,7 @@ async function start() {
         }
       }
     }
-  }
-
-  connectOnce();
+  });
 
   const uploadsDir = ensureUploadsDir();
   const { app, socketCorsOrigin } = createApp({ uploadsDir, dbState });
@@ -250,8 +249,8 @@ async function start() {
     DATABASE_URL: isDatabaseUrlConfigured() ? "set" : "missing",
     database: formatSanitizedDatabaseLog(getSanitizedDatabaseInfo()),
     email: mailLabel,
-    DB: dbState.ready ? "ready" : dbState.needsMigration ? "needs_migration" : "pending_first_connection",
-    schema: dbState.schema?.ok ? "ok" : dbState.needsMigration ? "needs_migration" : "pending"
+    DB: dbState.ready ? "ready" : dbState.needsMigration ? "needs_migration" : "initializing",
+    schema: dbState.schema?.ok ? "ok" : dbState.needsMigration ? "needs_migration" : "initializing"
   });
 
   let listenAttemptPort = initialListenPort;
@@ -299,7 +298,9 @@ async function start() {
         boundPort: listenAttemptPort,
         NODE_ENV: process.env.NODE_ENV || "development",
         email: mailLabel,
-        DB: dbState.ready ? "ready" : "connecting"
+        DB: dbState.ready ? "ready" : dbState.initSettled ? "unavailable" : "initializing",
+        commit: BUILD_ID,
+        commitFull: BUILD_COMMIT
       });
       console.log(
         `TransPak backend running - version ${APP_VERSION} - build ${BUILD_ID} - build OK - port ${listenAttemptPort}`

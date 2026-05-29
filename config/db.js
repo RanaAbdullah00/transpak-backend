@@ -38,7 +38,7 @@ async function connectDB(dbState = null) {
       // eslint-disable-next-line no-console
       console.error("[db] connection failed:", err?.message || String(err));
     }
-    throw err;
+    return pool;
   }
 
   let schema;

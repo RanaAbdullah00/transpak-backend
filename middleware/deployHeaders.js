@@ -1,6 +1,6 @@
 const path = require("path");
 const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
-const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
+const { BUILD_ID } = require("../utils/deployIdentity");
 
 /** Attach build metadata on every response so clients can detect stale deploys. */
 function deployHeaders(req, res, next) {
