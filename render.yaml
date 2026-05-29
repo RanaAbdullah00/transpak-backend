@@ -15,7 +15,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci && npm run build
-    startCommand: npm start
+    startCommand: npm run db:migrate && node server.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

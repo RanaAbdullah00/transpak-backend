@@ -1,4 +1,7 @@
--- Phase 6: notification deduplication + sync performance
+/**
+ * Phase 6 — notification deduplication + sync performance (idempotent).
+ * Safe to re-run: ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS only.
+ */
 ALTER TABLE notifications
   ADD COLUMN IF NOT EXISTS event_id uuid,
   ADD COLUMN IF NOT EXISTS dedupe_key text;

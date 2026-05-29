@@ -8,7 +8,7 @@ const TRUCK_STATUS = {
 };
 
 /** SQL fragment: trucks eligible for marketplace matching. */
-const MATCHING_ELIGIBLE_STATUS_SQL = `t.status IN ('approved', 'active')`;
+const MATCHING_ELIGIBLE_STATUS_SQL = `t.status IN ('approved')`;
 
 const LEGACY_STATUS_MAP = {
   active: TRUCK_STATUS.APPROVED,

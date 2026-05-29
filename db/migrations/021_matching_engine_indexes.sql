@@ -11,9 +11,9 @@ CREATE INDEX IF NOT EXISTS idx_loads_open_created
   ON loads (status, created_at DESC)
   WHERE status = 'open';
 
-CREATE INDEX IF NOT EXISTS idx_trucks_user_active_type
+CREATE INDEX IF NOT EXISTS idx_trucks_user_approved_type
   ON trucks (user_id, lower(trim(truck_type)))
-  WHERE status = 'active';
+  WHERE status = 'approved';
 
 CREATE INDEX IF NOT EXISTS idx_bids_carrier_load
   ON bids (carrier_id, load_id);

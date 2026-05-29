@@ -83,7 +83,7 @@ async function upsertIsolatedUser({ email, passwordHash, roles, activeRole, phon
 
 async function ensureCarrierTruck(userId) {
   const { rows } = await query(
-    `SELECT id FROM trucks WHERE user_id = $1 AND COALESCE(status, 'active') = 'active' LIMIT 1`,
+    `SELECT id FROM trucks WHERE user_id = $1 AND COALESCE(status, 'approved') = 'approved' LIMIT 1`,
     [userId]
   );
   if (rows[0]) return;
@@ -93,7 +93,7 @@ async function ensureCarrierTruck(userId) {
        user_id, engine_number, truck_type, capacity, license_plate,
        truck_card_front_image, truck_card_back_image, status, is_default
      )
-     VALUES ($1, $2, 'Truck', 25, $3, $4, $5, 'active', true)`,
+     VALUES ($1, $2, 'Truck', 25, $3, $4, $5, 'approved', true)`,
     [
       userId,
       `PHASE1-ENG-${suffix}`,

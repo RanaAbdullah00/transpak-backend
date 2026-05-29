@@ -30,6 +30,19 @@ Accounts must be **verified**, **profile-complete** (shipper to post, carrier wi
 
 For **self-exclusion** RBAC test, the shipper account needs both `shipper` and `carrier` in `users.roles[]`.
 
+## Migrations (production-safe)
+
+Migrations run **only** via deploy command — never on `npm start`:
+
+```bash
+npm run db:migrate    # applies pending migrations once (schema_migrations table)
+npm start             # connect + read-only schema verify only
+```
+
+Render: `npm run db:migrate && npm start` (see render.yaml).
+
+If schema is outdated, startup logs `DB MIGRATION REQUIRED` once and stays in safe mode (no retry loop).
+
 ## Phase 8 (production stabilization)
 
 ```bash

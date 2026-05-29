@@ -58,7 +58,7 @@ function registerProcessSafetyHandlers() {
     console.error("[process] unhandledRejection:", msg);
     if (String(reason?.code || "") === "42703" || /does not exist/i.test(msg)) {
       // eslint-disable-next-line no-console
-      console.error("[process] hint: run `npm run db:migrate` in transpak-backend");
+      console.error("[process] hint: run `npm run db:migrate` or `npm run db:ensure-notifications` (migration 023_notifications_realtime.sql)");
     }
   });
 

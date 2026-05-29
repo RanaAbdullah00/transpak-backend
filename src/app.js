@@ -152,39 +152,46 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       commit: BUILD_ID,
       uptime: process.uptime(),
       db: dbState?.ready ? "ready" : "unavailable",
-      databaseUrlConfigured: isDatabaseUrlConfigured()
+      databaseUrlConfigured: isDatabaseUrlConfigured(),
+      schema: dbState?.schema || null
     });
   });
 
   app.use("/api", globalApiLimiter);
 
   app.get("/api/health", async (req, res) => {
-    let dbPing = "skipped";
-    if (dbState?.ready) {
-      try {
-        await query("SELECT 1");
-        dbPing = "ok";
-      } catch (pingErr) {
-        dbPing = "error";
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.error("[health] db ping failed:", pingErr?.message || pingErr);
-        }
-      }
-    }
+    const { resolveDatabaseHealth } = require("../utils/healthStatus");
     const { getOpsSnapshot } = require("../utils/opsTelemetry");
+    const { getDeployIdentity } = require("../utils/deployIdentity");
     const realtimeHub = require("../services/realtimeHub");
+    const uptime = process.uptime();
+    const dbHealth = await resolveDatabaseHealth(dbState, uptime);
+
+    if (dbHealth.dbReady && !dbState.ready) {
+      dbState.ready = true;
+      dbState.schema = dbHealth.schema;
+      dbState.error = null;
+    } else if (dbHealth.schema) {
+      dbState.schema = dbHealth.schema;
+    }
+
+    const deploy = { ...getDeployIdentity(), migrationSafe: true };
+
     return res.json({
       success: true,
       message: "ok",
       data: {
-        status: "ok",
+        status: dbHealth.dbReady ? "ok" : dbHealth.db === "connecting" ? "starting" : "degraded",
         version: APP_VERSION,
         build: BUILD_ID,
         commit: BUILD_ID,
-        uptime: process.uptime(),
-        db: dbState?.ready ? "ready" : "unavailable",
-        dbPing,
+        uptime,
+        db: dbHealth.db,
+        dbPing: dbHealth.dbPing,
+        schema: dbHealth.schema,
+        schemaVersion: dbHealth.schemaVersion || "023",
+        migrationRequired: dbHealth.migrationRequired,
+        deploy,
         sockets: realtimeHub.getConnectedSocketCount(),
         ops: getOpsSnapshot({ includeRecent: false })
       }

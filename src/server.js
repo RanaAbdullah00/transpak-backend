@@ -7,17 +7,19 @@ const { Server } = require("socket.io");
 const { verifyBrevoApi, validateOutboundMailConfig } = require("../services/emailService");
 const { isDatabaseUrlConfigured, query } = require("../db/pool");
 const connectDB = require("../config/db");
+const { getSanitizedDatabaseInfo, formatSanitizedDatabaseLog } = require("../utils/dbSanitizedInfo");
+const { logDeployIdentity, getDeployIdentity, BUILD_ID } = require("../utils/deployIdentity");
 const realtimeHub = require("../services/realtimeHub");
 const registerSocketHandlers = require("../sockets");
 const { createApp } = require("./app");
 const { registerProcessSafetyHandlers } = require("../utils/globalErrorHandler");
 
 const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
-const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
 
 registerProcessSafetyHandlers();
 const { validateProductionEnv } = require("../utils/validateProductionEnv");
 validateProductionEnv();
+logDeployIdentity();
 global.__TRANSPAK_SERVER_STARTED_AT = new Date().toISOString();
 
 const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";
@@ -60,11 +62,6 @@ const allowPortFallback =
     process.env.NODE_ENV !== "production" ||
     !String(process.env.RENDER || "").trim());
 
-const DB_RETRY_BASE_MS = Number(process.env.DB_RETRY_BASE_MS || 5000);
-const DB_RETRY_MAX_QUICK = Number(process.env.DB_RETRY_MAX_QUICK || 8);
-const DB_RETRY_SLOW_MS = Number(process.env.DB_RETRY_SLOW_MS || 120000);
-/** After wrong password / Supabase ECIRCUITBREAKER — long wait so we do not extend the lockout (Render unchanged: optional env). */
-const DB_RETRY_CIRCUIT_MS = Number(process.env.DB_RETRY_CIRCUIT_MS || 300000);
 const MAX_PORT_FALLBACK_ATTEMPTS = 25;
 
 function ensureUploadsDir() {
@@ -183,58 +180,48 @@ function isDnsNotFound(err) {
 }
 
 async function start() {
-  const dbState = { ready: false, error: null };
-  let quickAttempts = 0;
+  const dbState = { ready: false, needsMigration: false, error: null, schema: null };
+  let dbNotReadyLogged = false;
 
-  async function connectWithRetry() {
+  async function connectOnce() {
     try {
-      await connectDB();
-      dbState.ready = true;
-      dbState.error = null;
-      quickAttempts = 0;
-      await seedAdminIfNeeded();
-      await ensureTranspakDemoAdmin();
+      await connectDB(dbState);
+      if (dbState.ready) {
+        await seedAdminIfNeeded();
+        await ensureTranspakDemoAdmin();
+      } else if (!dbNotReadyLogged) {
+        dbNotReadyLogged = true;
+        // eslint-disable-next-line no-console
+        console.error("[db] DB NOT READY - RUN npm run db:migrate");
+      }
     } catch (err) {
       dbState.ready = false;
       dbState.error = err;
-      const { code, msg } = formatDbError(err);
-      const isProd = process.env.NODE_ENV === "production";
-      const safeDetail = isProd ? `${code}` : `${code}: ${msg}`;
-
-      if (isSupabaseCircuitBreaker(err) || isPasswordAuthFailure(err)) {
+      if (err.schema) dbState.schema = err.schema;
+      if (!dbNotReadyLogged) {
+        dbNotReadyLogged = true;
+        const { code, msg } = formatDbError(err);
         // eslint-disable-next-line no-console
-        console.error(
-          "[db] Supabase blocked or rejected login (wrong DATABASE_URL password, or pooler user must be postgres.<project-ref>).",
-          "Dashboard → Database → Connect → copy Session pooler URI. If blocked, wait a few minutes or reset DB password; do not rapid-retry."
-        );
-        quickAttempts = 0;
-        // eslint-disable-next-line no-console
-        console.error(`[db] backing off ${DB_RETRY_CIRCUIT_MS}ms before next attempt (${safeDetail})`);
-        setTimeout(connectWithRetry, DB_RETRY_CIRCUIT_MS);
-        return;
+        console.error("[db] DB NOT READY - RUN npm run db:migrate");
+        if (isDnsNotFound(err)) {
+          // eslint-disable-next-line no-console
+          console.error(
+            "[db] DNS ENOTFOUND: use Supabase Session pooler (*.pooler.supabase.com) in DATABASE_URL."
+          );
+        } else if (isSupabaseCircuitBreaker(err) || isPasswordAuthFailure(err)) {
+          // eslint-disable-next-line no-console
+          console.error(
+            "[db] Check DATABASE_URL credentials (Session pooler URI). No automatic retry — fix env and redeploy."
+          );
+        } else {
+          // eslint-disable-next-line no-console
+          console.error(`[db] ${code}: ${msg}`);
+        }
       }
-
-      if (isDnsNotFound(err)) {
-        // eslint-disable-next-line no-console
-        console.error(
-          "[db] DNS ENOTFOUND: host not resolved. On IPv4 networks use Supabase Session pooler (*.pooler.supabase.com), not direct db.*.supabase.co, unless you use the IPv4 add-on."
-        );
-      }
-
-      quickAttempts += 1;
-      if (quickAttempts <= DB_RETRY_MAX_QUICK) {
-        const backoff = Math.min(DB_RETRY_BASE_MS * 2 ** Math.min(quickAttempts - 1, 5), 60000);
-        console.error(`[db] retry ${quickAttempts}/${DB_RETRY_MAX_QUICK} after failure (${safeDetail}); next in ${backoff}ms`);
-        setTimeout(connectWithRetry, backoff);
-        return;
-      }
-      console.error(`[db] quick retries exhausted; backing off ${DB_RETRY_SLOW_MS}ms — ${safeDetail}`);
-      quickAttempts = 0;
-      setTimeout(connectWithRetry, DB_RETRY_SLOW_MS);
     }
   }
 
-  connectWithRetry();
+  connectOnce();
 
   const uploadsDir = ensureUploadsDir();
   const { app, socketCorsOrigin } = createApp({ uploadsDir, dbState });
@@ -261,8 +248,10 @@ async function start() {
     paasPortLock,
     allowPortFallback,
     DATABASE_URL: isDatabaseUrlConfigured() ? "set" : "missing",
+    database: formatSanitizedDatabaseLog(getSanitizedDatabaseInfo()),
     email: mailLabel,
-    DB: dbState.ready ? "ready" : "pending_first_connection"
+    DB: dbState.ready ? "ready" : dbState.needsMigration ? "needs_migration" : "pending_first_connection",
+    schema: dbState.schema?.ok ? "ok" : dbState.needsMigration ? "needs_migration" : "pending"
   });
 
   let listenAttemptPort = initialListenPort;
