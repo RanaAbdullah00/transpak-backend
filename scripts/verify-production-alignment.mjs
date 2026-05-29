@@ -163,7 +163,6 @@ async function main() {
   const localFull = localCommitFull();
   const localNormalized = normalizeCommit(localFull);
   console.log("Local git source:", localCommitSource());
-  console.log("Local git source:", localCommitSource());
   console.log("Local git HEAD (full):", localFull);
   console.log("Local git HEAD (normalized):", localNormalized);
 
