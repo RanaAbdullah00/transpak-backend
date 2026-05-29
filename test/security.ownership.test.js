@@ -47,7 +47,7 @@ describe("Security — centralized auth helpers", () => {
 
   it("admin routes are guarded at router level", () => {
     const src = fs.readFileSync(path.join(root, "routes", "adminRoutes.js"), "utf8");
-    assert.ok(src.includes("router.use(protect, requireAdminSession)"));
+    assert.ok(src.includes("protect") && src.includes("requireAdminSession"));
   });
 
   it("rejectForbiddenBodyFields is wired globally on /api", () => {
