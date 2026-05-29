@@ -16,6 +16,8 @@ const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.jso
 const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID || "local").slice(0, 12);
 
 registerProcessSafetyHandlers();
+const { validateProductionEnv } = require("../utils/validateProductionEnv");
+validateProductionEnv();
 global.__TRANSPAK_SERVER_STARTED_AT = new Date().toISOString();
 
 const BIND_HOST = String(process.env.BIND_HOST || "0.0.0.0").trim() || "0.0.0.0";

@@ -1,6 +1,7 @@
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
 const loadRepo = require("../repositories/loadRepo");
 const { runMarketplaceExpiryProcessor } = require("../../utils/loadExpiry");
+const { getCarrierFleetProfile } = require("../../utils/loadMatching");
 
 async function listOpen(req, res) {
   try {
@@ -14,7 +15,17 @@ async function listOpen(req, res) {
     const maxN = maxRaw ? Number(maxRaw) : null;
     if (minN != null && maxN != null && minN > maxN) return sendError(res, 400, "minPrice cannot exceed maxPrice");
 
-    const loads = await loadRepo.listOpenLoads({
+    const fleet = await getCarrierFleetProfile(req.auth.userId);
+    if (!fleet.truckCount) {
+      return sendSuccess(
+        res,
+        200,
+        { items: [], total: 0, limit: Number(q.limit) || 50, offset: Number(q.offset) || 0 },
+        "Add a truck to your fleet to see matching loads"
+      );
+    }
+
+    const result = await loadRepo.listOpenLoads({
       origin: q.origin,
       destination: q.destination,
       vehicleType: q.vehicleType,
@@ -28,9 +39,10 @@ async function listOpen(req, res) {
       sort: q.sort || "newest",
       limit: q.limit,
       offset: q.offset,
-      excludeCarrierId: req.auth?.userId
+      excludeCarrierId: req.auth?.userId,
+      carrierFleet: fleet
     });
-    return sendSuccess(res, 200, loads);
+    return sendSuccess(res, 200, result);
   } catch (err) {
     return sendError(res, 500, err.message || "Server error");
   }

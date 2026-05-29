@@ -24,4 +24,22 @@ router.put(
   truckController.update
 );
 
+router.patch(
+  "/:id/default",
+  protect,
+  requireRole("carrier"),
+  truckController.updateValidators.slice(0, 1),
+  truckController.validate,
+  truckController.setDefault
+);
+
+router.delete(
+  "/:id",
+  protect,
+  requireRole("carrier"),
+  truckController.updateValidators.slice(0, 1),
+  truckController.validate,
+  truckController.remove
+);
+
 module.exports = router;

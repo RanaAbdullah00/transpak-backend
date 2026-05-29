@@ -1,26 +1,35 @@
 const { query } = require("../db/pool");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
+const { sanitizePublicTrucks } = require("../utils/resourceAuth");
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
 async function hasActiveContract(viewerId, targetId) {
-  const { rows } = await query(
-    `SELECT 1 FROM bookings b
-     WHERE b.status = 'approved'
-       AND (
-         (b.shipper_id = $1 AND b.carrier_id = $2)
-         OR (b.shipper_id = $2 AND b.carrier_id = $1)
-       )
+  const { rows: bidRows } = await query(
+    `SELECT 1 FROM bids b
+     JOIN loads l ON l.id = b.load_id
+     WHERE (l.shipper_id = $1 AND b.carrier_id = $2)
+        OR (l.shipper_id = $2 AND b.carrier_id = $1)
      LIMIT 1`,
     [viewerId, targetId]
   );
-  if (rows[0]) return true;
+  if (bidRows[0]) return true;
+
+  const { rows: shipRows } = await query(
+    `SELECT 1 FROM loads l
+     WHERE (l.shipper_id = $1 AND l.assigned_carrier_id = $2)
+        OR (l.shipper_id = $2 AND l.assigned_carrier_id = $1)
+     LIMIT 1`,
+    [viewerId, targetId]
+  );
+  if (shipRows[0]) return true;
+
   const { rows: spaceRows } = await query(
     `SELECT 1 FROM carrier_space_requests r
      JOIN carrier_space_listings l ON l.id = r.listing_id
-     WHERE r.status IN ('accepted', 'active', 'in_transit')
+     WHERE r.status IN ('request_sent', 'accepted', 'active', 'in_transit', 'completed')
        AND (
          (r.shipper_id = $1 AND l.carrier_id = $2)
          OR (r.shipper_id = $2 AND l.carrier_id = $1)
@@ -28,7 +37,16 @@ async function hasActiveContract(viewerId, targetId) {
      LIMIT 1`,
     [viewerId, targetId]
   );
-  return Boolean(spaceRows[0]);
+  if (spaceRows[0]) return true;
+
+  const { rows: chatRows } = await query(
+    `SELECT 1 FROM conversations c
+     WHERE (c.user_a_id = $1 AND c.user_b_id = $2)
+        OR (c.user_a_id = $2 AND c.user_b_id = $1)
+     LIMIT 1`,
+    [viewerId, targetId]
+  );
+  return Boolean(chatRows[0]);
 }
 
 async function getPublicProfile(req, res) {
@@ -36,8 +54,8 @@ async function getPublicProfile(req, res) {
   if (!isUuid(targetId)) return sendError(res, 400, "Invalid profile id");
 
   const { rows: userRows } = await query(
-    `SELECT id, email, full_name AS "fullName", phone, profile_image AS "profileImage",
-            roles, active_role AS "activeRole", is_profile_complete AS "profileComplete",
+    `SELECT id, full_name AS "fullName", phone, profile_image AS "profileImage",
+            roles, is_profile_complete AS "profileComplete",
             created_at AS "joinedAt"
      FROM users WHERE id = $1`,
     [targetId]
@@ -46,7 +64,9 @@ async function getPublicProfile(req, res) {
   if (!user) return sendError(res, 404, "Profile not found");
 
   const viewerId = req.auth?.userId ? String(req.auth.userId) : null;
-  const showPhone = viewerId && (viewerId === targetId || (await hasActiveContract(viewerId, targetId)));
+  const hasContract =
+    viewerId && viewerId !== targetId ? await hasActiveContract(viewerId, targetId) : false;
+  const showPhone = viewerId && (viewerId === targetId || hasContract);
 
   const { rows: ratingRows } = await query(
     `SELECT COALESCE(AVG(score), 0)::numeric(10,2) AS avg, COUNT(*)::int AS count
@@ -54,13 +74,21 @@ async function getPublicProfile(req, res) {
     [targetId]
   );
 
-  const { rows: trucks } = await query(
+  const { rows: trucksRaw } = await query(
     `SELECT id, truck_type AS "truckType", capacity,
             truck_card_front_image AS "truckCardFrontImage",
             license_plate AS "licensePlate"
-     FROM trucks WHERE user_id = $1 ORDER BY created_at DESC LIMIT 12`,
+     FROM trucks
+     WHERE user_id = $1 AND status = 'approved'
+     ORDER BY created_at DESC
+     LIMIT 12`,
     [targetId]
   );
+  const trucks = sanitizePublicTrucks(trucksRaw, {
+    viewerId,
+    targetId,
+    hasContract
+  });
 
   const { rows: activeRows } = await query(
     `SELECT COUNT(*)::int AS c FROM bookings
@@ -91,8 +119,7 @@ async function getPublicProfile(req, res) {
   return sendSuccess(res, 200, {
     id: user.id,
     fullName: user.fullName || user.email?.split("@")[0] || "User",
-    roles: user.roles || [],
-    activeRole: user.activeRole,
+    roles: (user.roles || []).filter((r) => r === "shipper" || r === "carrier"),
     profileImage: user.profileImage,
     phone: showPhone ? user.phone : null,
     phoneLocked: !showPhone,

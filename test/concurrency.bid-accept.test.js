@@ -54,7 +54,7 @@ describe("Bid accept concurrency", { skip: skipConcurrencyReason() }, () => {
       acceptBid(shipper.token, bid2.id)
     ]);
 
-    const successes = [a, b].filter((r) => r.ok && r.data?.success !== false);
+    const successes = [a, b].filter((r) => r.ok);
     const conflicts = [a, b].filter(
       (r) => r.status === 409 || r.code === "LOAD_ALREADY_BOOKED" || r.code === "LOAD_NOT_OPEN"
     );

@@ -4,6 +4,8 @@
  * Error:   { success, message, data?, code?, errors?, deliveryReason?, deliveryHint? }
  */
 
+const { clientMessage, sanitizeErrorData } = require("./safeApiError");
+
 function sendSuccess(res, statusCode, data, message = "OK", code = null) {
   const payload = {
     success: true,
@@ -30,8 +32,8 @@ function sendError(res, statusCode, message, data = null, code = null, meta = nu
   const payload = {
     success: false,
     code: resolvedCode,
-    message: message || "Request failed",
-    data: data !== undefined ? data : null,
+    message: clientMessage(status, message),
+    data: sanitizeErrorData(data),
     error: resolvedCode
   };
   if (meta && typeof meta === "object") {

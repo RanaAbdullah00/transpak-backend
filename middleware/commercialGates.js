@@ -45,13 +45,20 @@ async function requireCarrierTruckReady(req, res, next) {
     const { rows } = await query(
       `SELECT id FROM trucks
        WHERE user_id = $1
+         AND status = 'approved'
          AND char_length(trim(coalesce(truck_card_front_image, ''))) > 0
          AND char_length(trim(coalesce(truck_card_back_image, ''))) > 0
        LIMIT 1`,
       [req.auth.userId]
     );
     if (!rows[0]) {
-      return sendError(res, 403, "Add and complete at least one truck before bidding", null, "TRUCK_REQUIRED");
+      return sendError(
+        res,
+        403,
+        "Add an approved truck with documents before bidding",
+        null,
+        "TRUCK_REQUIRED"
+      );
     }
     return next();
   } catch (err) {

@@ -1,7 +1,12 @@
 const express = require("express");
 const { body, param, validationResult } = require("express-validator");
 const { protect, requireAnyRole, requireRole, validateViewAs } = require("../middleware/authMiddleware");
-const { hasAdminRole } = require("../utils/resourceAuth");
+const {
+  canMutateBidAsShipper,
+  canMutateBidAsCarrier,
+  sendForbidden,
+  FORBIDDEN_CODES
+} = require("../utils/resourceAuth");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { getPool, query } = require("../db/pool");
 const {
@@ -15,13 +20,16 @@ const {
   assertCounterLimit
 } = require("../utils/bidStateMachine");
 const { notifyUser } = require("../utils/notifyEvent");
-const { isBiddingOpen } = require("../utils/loadDeadline");
+const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
 const { assertNotSelfCommercial } = require("../utils/selfExclusion");
 const { requireCarrierTruckReady } = require("../middleware/commercialGates");
 const { writeAudit } = require("../utils/auditLog");
+const { forbidAdminOnlyCommercial } = require("../middleware/forbidAdminOnlyCommercial");
 const router = express.Router();
+
+router.use(forbidAdminOnlyCommercial);
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -39,31 +47,12 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), validateViewAs(), async (req, res) => {
+router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(), async (req, res) => {
   const roles = req.auth?.roles || [];
-  const isAdmin = hasAdminRole(req.auth);
   const viewAs = resolveCommercialViewRole(roles, req.commercialView);
 
   const loadId = req.query?.loadId ? String(req.query.loadId).trim() : "";
-  const adminLoadFilter = loadId && isUuid(loadId) ? "AND b.load_id = $1" : "";
   const shipperLoadClause = loadId && isUuid(loadId) ? "AND b.load_id = $2" : "";
-
-  if (isAdmin && !viewAs) {
-    const adminParams = adminLoadFilter ? [loadId] : [];
-    const { rows } = await query(
-      `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
-              b.status, b.created_at AS "createdAt",
-              COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName",
-              'Truck' AS "vehicleType"
-       FROM bids b
-       JOIN users u ON u.id = b.carrier_id
-       WHERE 1=1 ${adminLoadFilter}
-       ORDER BY b.created_at DESC
-       LIMIT 500`,
-      adminParams
-    );
-    return sendSuccess(res, 200, rows);
-  }
 
   if (viewAs === "carrier") {
     const { rows } = await query(
@@ -139,7 +128,8 @@ router.post(
     try {
     const { loadId, amount } = req.body || {};
     const { rows: loadRows } = await query(
-      `SELECT id, shipper_id, status, deadline_hours, deadline_minutes, created_at
+      `SELECT id, shipper_id, status, weight, vehicle_type,
+              deadline_hours, deadline_minutes, created_at
        FROM loads
        WHERE id = $1`,
       [loadId]
@@ -155,11 +145,6 @@ router.post(
     } catch (e) {
       return sendError(res, e.statusCode || 403, e.message, null, e.code);
     }
-    if (load.status !== "open") return sendError(res, 409, "Load is not open for bidding", null, "LOAD_NOT_OPEN");
-    if (!isBiddingOpen(load)) {
-      return sendError(res, 409, "Bidding deadline has passed", null, "BID_DEADLINE_PASSED");
-    }
-
     const { rows: existing } = await query(
       `SELECT id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,
               suggested_amount AS "suggestedAmount", suggested_by AS "suggestedBy",
@@ -167,29 +152,45 @@ router.post(
        FROM bids WHERE load_id = $1 AND carrier_id = $2`,
       [loadId, req.auth.userId]
     );
-    if (existing[0]) {
-      const st = normalizeBidStatus(existing[0].status);
-      if (st === BID.ACCEPTED) {
-        return sendError(res, 409, "This load already has an accepted carrier", null, "BID_ALREADY_ACCEPTED");
-      }
-      if (isAwaitingShipper(existing[0].status) && Number(existing[0].amount) === Number(amount)) {
-        const bid = { ...existing[0], flowStatus: apiBidStatus(existing[0].status) };
-        return sendSuccess(res, 200, bid, "Already submitted");
-      }
-      assertBidTransition(existing[0].status, BID.PENDING_SHIPPER);
+
+    const placement = await validateBidPlacement({
+      carrierUserId: req.auth.userId,
+      load,
+      existingBid: existing[0] || null
+    });
+    if (!placement.ok) {
+      return sendError(res, placement.status, placement.message, null, placement.code);
+    }
+
+    if (existing[0] && isAwaitingShipper(existing[0].status) && Number(existing[0].amount) === Number(amount)) {
+      const bid = { ...existing[0], flowStatus: apiBidStatus(existing[0].status) };
+      return sendSuccess(res, 200, bid, "Already submitted");
     }
 
     const { rows } = await query(
       `INSERT INTO bids (load_id, carrier_id, amount, status)
        VALUES ($1, $2, $3, 'pending_shipper_confirmation')
-       ON CONFLICT (load_id, carrier_id)
-         DO UPDATE SET amount = EXCLUDED.amount, status = 'pending_shipper_confirmation',
-           suggested_amount = NULL, suggested_by = NULL, counter_round_count = 0, updated_at = now()
-         RETURNING id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,
-                   suggested_amount AS "suggestedAmount", suggested_by AS "suggestedBy",
-                   created_at AS "createdAt"`,
+       ON CONFLICT (load_id, carrier_id) DO NOTHING
+       RETURNING id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,
+                 suggested_amount AS "suggestedAmount", suggested_by AS "suggestedBy",
+                 created_at AS "createdAt"`,
       [loadId, req.auth.userId, Number(amount)]
     );
+
+    if (!rows[0]) {
+      const { rows: again } = await query(
+        `SELECT id, load_id AS "loadId", carrier_id AS "carrierId", amount, status,
+                suggested_amount AS "suggestedAmount", suggested_by AS "suggestedBy",
+                created_at AS "createdAt"
+         FROM bids WHERE load_id = $1 AND carrier_id = $2`,
+        [loadId, req.auth.userId]
+      );
+      if (again[0]) {
+        const bid = { ...again[0], flowStatus: apiBidStatus(again[0].status) };
+        return sendSuccess(res, 200, bid, "Already submitted");
+      }
+      return sendError(res, 409, "Active bid already exists on this load", null, "ACTIVE_BID_EXISTS");
+    }
 
     const { rows: loadOwner } = await query(`SELECT shipper_id FROM loads WHERE id = $1`, [loadId]);
     if (loadOwner[0]?.shipper_id) {
@@ -206,11 +207,7 @@ router.post(
     const bid = { ...rows[0], flowStatus: apiBidStatus(rows[0].status) };
     return sendSuccess(res, 201, bid, "Created");
     } catch (err) {
-      if (
-        err.code === "INVALID_BID_TRANSITION" ||
-        err.code === "INVALID_BID_STATE" ||
-        err.code === "COUNTER_LIMIT_REACHED"
-      ) {
+      if (err.code === "COUNTER_LIMIT_REACHED") {
         return sendError(res, err.statusCode || 409, err.message, null, err.code);
       }
       return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
@@ -234,8 +231,8 @@ router.put(
     );
     const bid = bidRows[0];
     if (!bid) return sendError(res, 404, "Not found");
-    if (String(bid.shipper_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
-      return sendError(res, 403, "Forbidden");
+    if (!canMutateBidAsShipper(bid, req.auth)) {
+      return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
     }
     assertBidTransition(bid.status, BID.REJECTED);
     await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
@@ -275,15 +272,34 @@ router.put(
       const bidId = req.params.id;
       const amount = Number(req.body.amount);
       const { rows: bidRows } = await query(
-        `SELECT b.id, b.load_id, b.status, b.carrier_id, b.counter_round_count, l.shipper_id
+        `SELECT b.id, b.load_id, b.status, b.carrier_id, b.counter_round_count, l.shipper_id,
+                l.status AS load_status, l.weight, l.vehicle_type,
+                l.deadline_hours, l.deadline_minutes, l.created_at
          FROM bids b JOIN loads l ON l.id = b.load_id
          WHERE b.id = $1`,
         [bidId]
       );
       const bid = bidRows[0];
       if (!bid) return sendError(res, 404, "Not found");
-      if (String(bid.shipper_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
-        return sendError(res, 403, "Forbidden");
+      if (!canMutateBidAsShipper(bid, req.auth)) {
+        return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
+      }
+      const load = {
+        status: bid.load_status,
+        weight: bid.weight,
+        vehicle_type: bid.vehicle_type,
+        deadline_hours: bid.deadline_hours,
+        deadline_minutes: bid.deadline_minutes,
+        created_at: bid.created_at
+      };
+      const counterCheck = await validateCounterBid({
+        actorRole: "shipper",
+        carrierUserId: bid.carrier_id,
+        bid,
+        load
+      });
+      if (!counterCheck.ok) {
+        return sendError(res, counterCheck.status, counterCheck.message, null, counterCheck.code);
       }
       assertBidTransition(bid.status, BID.COUNTER);
       assertCounterLimit(bid.counter_round_count);
@@ -338,15 +354,34 @@ router.put(
       const bidId = req.params.id;
       const amount = Number(req.body.amount);
       const { rows: bidRows } = await query(
-        `SELECT b.id, b.carrier_id, b.status, b.suggested_amount, b.suggested_by, b.counter_round_count, l.shipper_id
+        `SELECT b.id, b.carrier_id, b.status, b.suggested_amount, b.suggested_by, b.counter_round_count,
+                l.shipper_id, l.status AS load_status, l.weight, l.vehicle_type,
+                l.deadline_hours, l.deadline_minutes, l.created_at
          FROM bids b JOIN loads l ON l.id = b.load_id
          WHERE b.id = $1`,
         [bidId]
       );
       const bid = bidRows[0];
       if (!bid) return sendError(res, 404, "Not found", null, "NOT_FOUND");
-      if (String(bid.carrier_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
-        return sendError(res, 403, "Forbidden", null, "FORBIDDEN");
+      if (!canMutateBidAsCarrier(bid, req.auth)) {
+        return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
+      }
+      const load = {
+        status: bid.load_status,
+        weight: bid.weight,
+        vehicle_type: bid.vehicle_type,
+        deadline_hours: bid.deadline_hours,
+        deadline_minutes: bid.deadline_minutes,
+        created_at: bid.created_at
+      };
+      const counterCheck = await validateCounterBid({
+        actorRole: "carrier",
+        carrierUserId: req.auth.userId,
+        bid,
+        load
+      });
+      if (!counterCheck.ok) {
+        return sendError(res, counterCheck.status, counterCheck.message, null, counterCheck.code);
       }
       const st = normalizeBidStatus(bid.status);
       if (st === BID.ACCEPTED) {
@@ -486,9 +521,9 @@ router.put(
         return sendError(res, 404, "Not found");
       }
 
-      if (String(bid.shipper_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
+      if (!canMutateBidAsShipper(bid, req.auth)) {
         await client.query("ROLLBACK");
-        return sendError(res, 403, "Forbidden");
+        return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
       }
 
       try {

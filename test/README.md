@@ -30,6 +30,24 @@ Accounts must be **verified**, **profile-complete** (shipper to post, carrier wi
 
 For **self-exclusion** RBAC test, the shipper account needs both `shipper` and `carrier` in `users.roles[]`.
 
+## Phase 8 (production stabilization)
+
+```bash
+npm run test:phase8
+npm run check:production
+```
+
+Static checks for socket hardening, cache TTL, rate limits, ops telemetry, and deployment headers. `check:production` also probes `/api/health` when the API is running.
+
+## Phase 7 (E2E + concurrency + attack)
+
+```bash
+npm run test:phase7
+node scripts/phase7-attack-simulation.mjs
+```
+
+Covers RBAC/IDOR probes, duplicate bid races, notification dedupe/sync, bid state machine, and DB invariants.
+
 ## Commands
 
 From `transpak-backend/`:

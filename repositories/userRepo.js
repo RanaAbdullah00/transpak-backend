@@ -219,21 +219,8 @@ async function switchActiveRole(userId, nextRole) {
 
     const roles = Array.isArray(locked[0].roles) ? locked[0].roles.map(normalizeRole).filter(Boolean) : [];
     if (!roles.includes(role)) {
-      if (role === "admin") {
-        await client.query("ROLLBACK");
-        return null;
-      }
-      await client.query(
-        `UPDATE users
-         SET roles = (
-           SELECT ARRAY(
-             SELECT DISTINCT unnest(COALESCE(roles, ARRAY[]::text[]) || ARRAY[$2::text])
-           )
-         ),
-         updated_at = now()
-         WHERE id = $1`,
-        [userId, role]
-      );
+      await client.query("ROLLBACK");
+      return null;
     }
 
     const { rows } = await client.query(

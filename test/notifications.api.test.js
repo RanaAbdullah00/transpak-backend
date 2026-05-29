@@ -53,7 +53,8 @@ describe("Notifications safety", { skip: hasIntegrationEnv() ? false : skipInteg
     assert.equal(after.payload?.count, 0);
 
     const list = await api("GET", "/api/notifications", { token });
-    const unreadInList = (list.payload || []).filter((n) => !n.read).length;
+    const rows = Array.isArray(list.payload) ? list.payload : list.payload?.items || [];
+    const unreadInList = rows.filter((n) => !n.read).length;
     assert.equal(unreadInList, 0);
     assert.ok(countBefore >= 0);
   });
@@ -62,6 +63,17 @@ describe("Notifications safety", { skip: hasIntegrationEnv() ? false : skipInteg
     const a = await api("GET", "/api/notifications", { token });
     const b = await api("GET", "/api/notifications", { token });
     assert.ok(a.ok && b.ok);
-    assert.equal(a.payload?.length, b.payload?.length);
+    const itemsA = Array.isArray(a.payload) ? a.payload : a.payload?.items || [];
+    const itemsB = Array.isArray(b.payload) ? b.payload : b.payload?.items || [];
+    assert.equal(itemsA.length, itemsB.length);
+    assert.equal(a.payload?.hasMore, b.payload?.hasMore);
+  });
+
+  it("sync endpoint returns items + unreadCount (reconnect recovery)", async () => {
+    const sync = await api("GET", "/api/notifications/sync", { token });
+    assert.ok(sync.ok, sync.message);
+    assert.ok(Array.isArray(sync.payload?.items));
+    assert.equal(typeof sync.payload?.unreadCount, "number");
+    assert.ok(sync.payload?.serverTime);
   });
 });

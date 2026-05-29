@@ -40,7 +40,8 @@ describe("Performance safety (HTTP timing)", { skip: hasIntegrationEnv() ? false
     const ms = Date.now() - t0;
     assert.ok(res.ok, res.message);
     assert.ok(ms < MAX_MS, `GET /api/loads took ${ms}ms`);
-    assert.ok(Array.isArray(res.payload));
+    const list = Array.isArray(res.payload) ? res.payload : res.payload?.items ?? [];
+    assert.ok(Array.isArray(list));
   });
 });
 

@@ -6,6 +6,10 @@ const BUILD_ID = String(process.env.RENDER_GIT_COMMIT || process.env.BUILD_ID ||
 function deployHeaders(req, res, next) {
   res.setHeader("X-TransPak-Version", APP_VERSION);
   res.setHeader("X-TransPak-Build", BUILD_ID);
+  if (req.path && String(req.path).startsWith("/api")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+  }
   next();
 }
 

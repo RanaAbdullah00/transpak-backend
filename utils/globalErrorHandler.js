@@ -1,3 +1,5 @@
+const { clientMessage, sanitizeErrorData } = require("./safeApiError");
+
 /**
  * Central Express error middleware — never leak stack traces in production.
  */
@@ -31,8 +33,7 @@ function globalErrorMiddleware(err, req, res, next) {
         ? "SERVER_ERROR"
         : "ERROR";
 
-  const message =
-    isProd && status >= 500 ? "Something went wrong" : err.message || "Something went wrong";
+  const message = clientMessage(status, err.message);
 
   if (status >= 500) {
     // eslint-disable-next-line no-console
@@ -43,7 +44,7 @@ function globalErrorMiddleware(err, req, res, next) {
     success: false,
     code,
     message,
-    data: err.data !== undefined ? err.data : null,
+    data: sanitizeErrorData(err.data),
     error: code
   };
 

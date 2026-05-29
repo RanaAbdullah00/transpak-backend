@@ -212,11 +212,16 @@ CREATE TABLE IF NOT EXISTS notifications (
   title text NOT NULL,
   message text NOT NULL,
   read boolean NOT NULL DEFAULT false,
+  event_id uuid,
+  dedupe_key text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_receiver ON notifications(receiver_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(receiver_id) WHERE read = false;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_receiver_dedupe
+  ON notifications (receiver_id, dedupe_key)
+  WHERE dedupe_key IS NOT NULL AND char_length(trim(dedupe_key)) > 0;
 
 -- Wallet removed (offline settlement).
 
@@ -228,13 +233,18 @@ CREATE TABLE IF NOT EXISTS trucks (
   truck_type text NOT NULL,
   license_plate text NOT NULL,
   capacity numeric NOT NULL DEFAULT 0,
+  chassis_number text,
+  status text NOT NULL DEFAULT 'pending',
+  is_default boolean NOT NULL DEFAULT false,
   truck_card_front_image text NOT NULL DEFAULT '',
   truck_card_back_image text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT trucks_status_check CHECK (status IN ('pending', 'approved', 'suspended'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_trucks_user ON trucks(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trucks_user_status_default ON trucks(user_id, status, is_default DESC, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_trucks_user_engine ON trucks(user_id, engine_number);
 
 -- Demo video (admin managed)

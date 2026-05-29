@@ -83,6 +83,23 @@ const shipmentsRouteLimiter = rateLimit({
   }
 });
 
+const notificationsRouteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.NOTIFICATIONS_RATE_LIMIT_PER_MIN || 100),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const uid = req.auth?.userId;
+    return uid ? `notif:${uid}` : `notif:${req.ip}`;
+  },
+  message: {
+    success: false,
+    message: "Notification API rate limit exceeded.",
+    code: "RATE_LIMIT",
+    data: null
+  }
+});
+
 const bidsRouteLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: Number(process.env.BIDS_RATE_LIMIT_PER_MIN || 80),
@@ -106,5 +123,6 @@ module.exports = {
   uploadLimiter,
   mapsRouteLimiter,
   shipmentsRouteLimiter,
+  notificationsRouteLimiter,
   bidsRouteLimiter
 };

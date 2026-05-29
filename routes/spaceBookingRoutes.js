@@ -6,7 +6,12 @@ const { query, getPool } = require("../db/pool");
 const { notifyUser } = require("../utils/notifyEvent");
 const { assertSpaceTransition } = require("../utils/spaceRequestState");
 const { asyncHandler } = require("../utils/asyncHandler");
-const { hasAdminRole } = require("../utils/resourceAuth");
+const {
+  canActOnSpaceRequestAsCarrier,
+  canActOnSpaceRequestAsParty,
+  sendForbidden,
+  FORBIDDEN_CODES
+} = require("../utils/resourceAuth");
 
 const router = express.Router();
 
@@ -130,9 +135,13 @@ async function transitionRequest(req, res, nextStatus) {
       await client.query("ROLLBACK");
       return sendError(res, 404, "Request not found");
     }
-    if (String(row.carrier_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
+    if (!canActOnSpaceRequestAsCarrier(row, req.auth)) {
       await client.query("ROLLBACK");
-      return sendError(res, 403, "Forbidden");
+      return sendForbidden(
+        res,
+        "Only the listing carrier may perform this action",
+        FORBIDDEN_CODES.FORBIDDEN_OWNER
+      );
     }
 
     assertSpaceTransition(row.status, nextStatus);
@@ -215,9 +224,8 @@ async function partyTransition(req, res, nextStatus) {
   if (!row) return sendError(res, 404, "Not found");
   const uid = String(req.auth.userId);
   const isShipper = String(row.shipper_id) === uid;
-  const isCarrier = String(row.carrier_id) === uid;
-  if (!isShipper && !isCarrier && !hasAdminRole(req.auth)) {
-    return sendError(res, 403, "Forbidden");
+  if (!canActOnSpaceRequestAsParty(row, req.auth)) {
+    return sendForbidden(res, "You are not a party to this capacity request", FORBIDDEN_CODES.FORBIDDEN_RESOURCE);
   }
   try {
     assertSpaceTransition(row.status, nextStatus);
@@ -261,7 +269,7 @@ router.put(
 router.put(
   "/requests/:id/in-transit",
   protect,
-  requireAnyRole(["shipper", "carrier", "admin"]),
+  requireAnyRole(["shipper", "carrier"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
   asyncHandler((req, res) => partyTransition(req, res, "in_transit"))
@@ -270,7 +278,7 @@ router.put(
 router.put(
   "/requests/:id/complete",
   protect,
-  requireAnyRole(["shipper", "carrier", "admin"]),
+  requireAnyRole(["shipper", "carrier"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
   asyncHandler((req, res) => partyTransition(req, res, "completed"))

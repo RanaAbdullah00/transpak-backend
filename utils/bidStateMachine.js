@@ -32,7 +32,7 @@ const ALLOWED_BID_TRANSITIONS = {
   pending_shipper_confirmation: new Set(["counter_offered", "accepted", "rejected"]),
   counter_offered: new Set(["pending_shipper_confirmation", "accepted", "rejected"]),
   accepted: new Set(),
-  rejected: new Set(["pending_shipper_confirmation"]),
+  rejected: new Set(),
   cancelled: new Set()
 };
 

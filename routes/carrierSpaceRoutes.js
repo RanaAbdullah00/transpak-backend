@@ -5,7 +5,12 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query: dbQuery } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
 const { notifyUser } = require("../utils/notifyEvent");
-const { hasAdminRole } = require("../utils/resourceAuth");
+const {
+  canMutateCarrierSpaceListing,
+  hasAdminRole,
+  sendForbidden,
+  FORBIDDEN_CODES
+} = require("../utils/resourceAuth");
 
 const router = express.Router();
 
@@ -173,8 +178,8 @@ router.patch(
     const { rows: found } = await dbQuery(`SELECT * FROM carrier_space_listings WHERE id = $1`, [id]);
     const row = found[0];
     if (!row) return sendError(res, 404, "Not found");
-    if (String(row.carrier_id) !== String(req.auth.userId) && !hasAdminRole(req.auth)) {
-      return sendError(res, 403, "Forbidden");
+    if (!canMutateCarrierSpaceListing(row, req.auth)) {
+      return sendForbidden(res, "You do not own this listing", FORBIDDEN_CODES.FORBIDDEN_OWNER);
     }
     const rem = req.body.remainingSpaceKg != null ? Number(req.body.remainingSpaceKg) : null;
     const status = req.body.status != null ? String(req.body.status) : null;

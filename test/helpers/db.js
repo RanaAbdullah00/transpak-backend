@@ -61,6 +61,22 @@ async function countAcceptedBidsForLoad(loadId) {
   return rows[0]?.c ?? 0;
 }
 
+async function countBidsForLoadCarrier(loadId, carrierId) {
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS c FROM bids WHERE load_id = $1 AND carrier_id = $2`,
+    [loadId, carrierId]
+  );
+  return rows[0]?.c ?? 0;
+}
+
+async function getBidRow(bidId) {
+  const { rows } = await query(
+    `SELECT id, load_id, carrier_id, status FROM bids WHERE id = $1`,
+    [bidId]
+  );
+  return rows[0] || null;
+}
+
 async function getLoadStatus(loadId) {
   const { rows } = await query(`SELECT status, accepted_bid_id FROM loads WHERE id = $1`, [loadId]);
   return rows[0] || null;
@@ -99,6 +115,8 @@ module.exports = {
   insertTestBid,
   countShipmentsForLoad,
   countAcceptedBidsForLoad,
+  countBidsForLoadCarrier,
+  getBidRow,
   getLoadStatus,
   deleteTestLoadCascade,
   findUserIdByEmail,

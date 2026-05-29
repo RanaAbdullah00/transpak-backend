@@ -1,14 +1,23 @@
 const { getPool, query } = require("../db/pool");
 const { ACTIVE_BID_STATUSES_SQL } = require("./bidStateMachine");
 
+/**
+ * Bidding window length as a PostgreSQL interval (Supabase / PG 14+ safe).
+ * Uses integer minutes only — no make_interval().
+ */
+const BIDDING_DEADLINE_INTERVAL_SQL = `(
+    GREATEST(
+      1,
+      COALESCE(
+        NULLIF(l.deadline_minutes, 0),
+        GREATEST(1, COALESCE(l.deadline_hours, 2)) * 60
+      )::int
+    ) * INTERVAL '1 minute'
+  )`;
+
 const OPEN_LOAD_EXPIRY_SQL = `
   l.status = 'open'
-  AND l.created_at + make_interval(
-    mins => COALESCE(
-      l.deadline_minutes,
-      GREATEST(1, COALESCE(l.deadline_hours, 2)) * 60
-    )::double precision
-  ) < now()
+  AND l.created_at + ${BIDDING_DEADLINE_INTERVAL_SQL} < now()
 `;
 
 /**
@@ -103,7 +112,16 @@ function stopMarketplaceExpiryScheduler() {
   }
 }
 
+/** Loads still accepting bids (open + before deadline). */
+const OPEN_BIDDING_ELIGIBLE_SQL = `
+  l.status = 'open'
+  AND l.created_at + ${BIDDING_DEADLINE_INTERVAL_SQL} >= now()
+`;
+
 module.exports = {
+  OPEN_LOAD_EXPIRY_SQL,
+  OPEN_BIDDING_ELIGIBLE_SQL,
+  BIDDING_DEADLINE_INTERVAL_SQL,
   expireStaleOpenLoads,
   expireBidsOnNonOpenLoads,
   runMarketplaceExpiryProcessor,

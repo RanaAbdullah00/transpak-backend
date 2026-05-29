@@ -26,7 +26,11 @@ const {
 const { shipmentsRouteLimiter } = require("../middleware/apiRateLimit");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 const { writeAudit } = require("../utils/auditLog");
-const { hasAdminRole } = require("../utils/resourceAuth");
+const {
+  hasAdminRole,
+  assertShipmentParties,
+  assertAssignedCarrier
+} = require("../utils/resourceAuth");
 
 const router = express.Router();
 router.use(shipmentsRouteLimiter);
@@ -69,13 +73,7 @@ function toTrackResponse(req, doc) {
 }
 
 function assertTrackAccessOrThrow(load, auth) {
-  if (hasAdminRole(auth)) return;
-
-  const uid = String(auth?.userId || "");
-  const isShipper = String(load?.shipper_id || "") === uid;
-  const isAssignedCarrier = String(load?.assigned_carrier_id || "") === uid;
-  if (isShipper || isAssignedCarrier) return;
-  throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
+  assertShipmentParties(load, auth);
 }
 
 async function resolveLoadForRef(refKey) {
@@ -204,6 +202,7 @@ router.put(
       const load = await resolveLoadForRef(req.params.id);
       if (!load) return sendError(res, 404, "Not found");
       assertTrackAccessOrThrow(load, req.auth);
+      assertAssignedCarrier(load, req.auth);
 
       const { status } = req.body || {};
       const nextRaw = String(status || "").trim();

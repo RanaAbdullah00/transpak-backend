@@ -15,7 +15,7 @@
 2. `req.auth` shape: `{ user, userId, roles }` — no `activeRole` on `req.auth`.
 3. List endpoints scope data by `roles[]` and/or validated `req.commercialView` (from `validateViewAs`).
 4. `validateViewAs`: if `?viewAs` is present, it must be `shipper` or `carrier` **and** `viewAs ∈ req.auth.roles`, else `403 FORBIDDEN_VIEW_AS`.
-5. Resource overrides use `utils/resourceAuth.js` (`hasAdminRole`, `canReadLoad`) — admin requires `roles.includes('admin')`.
+5. Resource checks use `utils/resourceAuth.js` (`canReadLoad`, `canMutate*`) — party/owner only on commercial routes; admin uses `/api/admin/*` only.
 6. Notifications: SQL scoped by `notificationScopeClause({ roles })` only.
 7. Admin routes: `router.use(protect, requireAdminSession)` where `requireAdminSession = requireRole('admin')`.
 
@@ -35,7 +35,9 @@
 | `utils/authContext.js` | DB auth context builder |
 | `utils/commercialViewRole.js` | Resolve list view after validation |
 | `utils/notificationScope.js` | Inbox SQL scope by roles[] |
-| `utils/resourceAuth.js` | Admin + load read helpers |
+| `utils/resourceAuth.js` | `sendForbidden`, `canReadLoad`, `canMutate*`, party checks, `sanitizePublicTrucks` |
+| `middleware/authorizeResource.js` | `requireLoadRead`, `requireLoadShipperMutate` |
+| `docs/SECURITY_AUDIT.md` | Phase 1 route inventory + manual tampering checklist |
 
 ## Role switch
 

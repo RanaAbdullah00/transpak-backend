@@ -11,6 +11,12 @@ const {
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
+const realtimeHub = require("../services/realtimeHub");
+const { allowSocketEvent, clearSocketRateLimits } = require("../utils/socketEventRateLimit");
+const {
+  recordSocketConnect,
+  recordSocketDisconnect
+} = require("../utils/opsTelemetry");
 
 function extractToken(socket) {
   const a = socket.handshake.auth;
@@ -39,11 +45,41 @@ module.exports = function registerSocketHandlers(io) {
     }
   });
 
+  function joinWorkspaceRooms(sock, userId, workspace) {
+    const uid = String(userId);
+    const ws = String(workspace || "").trim().toLowerCase();
+    if (ws === "shipper" || ws === "carrier" || ws === "admin") {
+      for (const other of ["shipper", "carrier", "admin"]) {
+        if (other !== ws) sock.leave(`user:${uid}:role:${other}`);
+      }
+      sock.join(`user:${uid}:role:${ws}`);
+    }
+  }
+
   io.on("connection", (socket) => {
     const uid = String(socket.userId);
-    socket.join(`user:${uid}`);
+    recordSocketConnect();
+    const handshakeWorkspace = String(socket.handshake?.auth?.workspace || "").trim().toLowerCase();
+    joinWorkspaceRooms(socket, uid, handshakeWorkspace);
+
+    socket.on("disconnect", (reason) => {
+      clearSocketRateLimits(socket);
+      recordSocketDisconnect(reason);
+    });
+
+    socket.on("workspace:join", (payload) => {
+      if (!allowSocketEvent(socket, "workspace:join")) return;
+      const ws = String(payload?.workspace || payload?.activeRole || "").trim().toLowerCase();
+      if (ws === "shipper" || ws === "carrier" || ws === "admin") {
+        joinWorkspaceRooms(socket, uid, ws);
+      }
+    });
 
     socket.on("chat:join", async (payload, ack) => {
+      if (!allowSocketEvent(socket, "chat:join")) {
+        if (typeof ack === "function") ack({ ok: false, rateLimited: true });
+        return;
+      }
       try {
         const convId = payload?.conversationId;
         if (!isUuid(convId)) {
@@ -64,6 +100,7 @@ module.exports = function registerSocketHandlers(io) {
     });
 
     socket.on("tracking:join", async (payload) => {
+      if (!allowSocketEvent(socket, "tracking:join")) return;
       try {
         const refKey = String(payload?.refKey || "").trim();
         if (!refKey || refKey.length > 72) return;
@@ -74,17 +111,9 @@ module.exports = function registerSocketHandlers(io) {
         );
         const load = loadRows[0];
         if (!load) return;
-        let isAdmin = false;
-        try {
-          const { rows: u } = await db(`SELECT roles FROM users WHERE id = $1`, [uid]);
-          const r = u[0]?.roles;
-          if (Array.isArray(r) && r.includes("admin")) isAdmin = true;
-        } catch {
-          /* ignore */
-        }
         const isShipper = String(load.shipper_id || "") === uid;
         const isCarrier = String(load.assigned_carrier_id || "") === uid;
-        if (!isShipper && !isCarrier && !isAdmin) return;
+        if (!isShipper && !isCarrier) return;
         const room = trackRoomKey(load);
         if (room) socket.join(`track:${room}`);
       } catch {
@@ -93,6 +122,10 @@ module.exports = function registerSocketHandlers(io) {
     });
 
     socket.on("tracking:location", async (payload, ack) => {
+      if (!allowSocketEvent(socket, "tracking:location")) {
+        if (typeof ack === "function") ack({ ok: false, rateLimited: true });
+        return;
+      }
       try {
         const refKey = String(payload?.refKey || "").trim();
         const coordCheck = validateGpsCoordinates(payload?.lat, payload?.lng);
@@ -166,6 +199,7 @@ module.exports = function registerSocketHandlers(io) {
     });
 
     socket.on("chat:seen", async (payload) => {
+      if (!allowSocketEvent(socket, "chat:seen")) return;
       try {
         const convId = payload?.conversationId;
         if (!isUuid(convId)) return;
@@ -177,7 +211,16 @@ module.exports = function registerSocketHandlers(io) {
           [convId, uid]
         );
         const peerId = String(c.user_a_id) === uid ? String(c.user_b_id) : String(c.user_a_id);
-        io.to(`user:${peerId}`).emit("chat:seen", { conversationId: convId });
+        const { rows: peerRows } = await db(`SELECT roles FROM users WHERE id = $1`, [peerId]);
+        const peerRoles = Array.isArray(peerRows[0]?.roles) ? peerRows[0].roles : [];
+        const commercial = peerRoles.filter((r) => r === "shipper" || r === "carrier");
+        if (commercial.length) {
+          commercial.forEach((r) =>
+            realtimeHub.emitToUserRole(peerId, r, "chat:seen", { conversationId: convId })
+          );
+        } else {
+          realtimeHub.emitToUserRole(peerId, "admin", "chat:seen", { conversationId: convId });
+        }
       } catch {
         /* ignore */
       }

@@ -401,6 +401,10 @@ async function updateActiveRole(req, res) {
     return sendError(res, 403, "Role not available for this account");
   }
 
+  if (!userRepo.hasRole(user, next)) {
+    return sendError(res, 403, "Role not available for this account", null, "ROLE_NOT_GRANTED");
+  }
+
   const updated = await userRepo.switchActiveRole(req.auth.userId, next);
   if (!updated) {
     return sendError(res, 500, "Role update failed");

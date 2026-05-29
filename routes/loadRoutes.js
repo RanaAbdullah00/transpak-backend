@@ -12,7 +12,7 @@ const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { persistLoadRouteSnapshot } = require("../utils/loadRouteSnapshot");
 const { writeAudit } = require("../utils/auditLog");
-const { canReadLoad } = require("../utils/resourceAuth");
+const { requireLoadRead, requireLoadShipperMutate } = require("../middleware/authorizeResource");
 
 const router = express.Router();
 
@@ -130,17 +130,7 @@ async function updateLoad(req, res) {
   try {
     const { cargo, origin, destination, weight, type, vehicleType, price, expectedPrice, pickupDate, deadlineHours } =
       req.body || {};
-
-    const { rows: found } = await query(
-      `SELECT id, shipper_id, status, vehicle_type, expected_price
-       FROM loads
-       WHERE id = $1`,
-      [req.params.id]
-    );
-    const load = found[0];
-    if (!load) return sendError(res, 404, "Not found");
-    if (String(load.shipper_id) !== String(req.auth.userId)) return sendError(res, 403, "Forbidden");
-    if (load.status !== "open") return sendError(res, 409, "Only open loads can be updated");
+    const load = req.loadRow;
 
     let nextPickupDate = null;
     if (pickupDate !== undefined && pickupDate !== null && String(pickupDate).trim() !== "") {
@@ -193,12 +183,6 @@ async function updateLoad(req, res) {
 
 async function deleteOwnOpenLoad(req, res) {
   try {
-    const { rows: found } = await query(`SELECT id, shipper_id, status FROM loads WHERE id = $1`, [req.params.id]);
-    const load = found[0];
-    if (!load) return sendError(res, 404, "Not found");
-    if (String(load.shipper_id) !== String(req.auth.userId)) return sendError(res, 403, "Forbidden");
-    if (load.status !== "open") return sendError(res, 409, "Only open loads can be deleted");
-
     await query(`DELETE FROM loads WHERE id = $1`, [req.params.id]);
     return sendSuccess(res, 200, { ok: true }, "Deleted");
   } catch (err) {
@@ -210,6 +194,7 @@ router.patch(
   "/:id",
   protect,
   requireRole("shipper"),
+  requireLoadShipperMutate("id"),
   updateLoadValidators,
   validate,
   updateLoad
@@ -219,29 +204,36 @@ router.delete(
   "/:id",
   protect,
   requireRole("shipper"),
-  [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid load id"); })()))],
-  validate,
+  requireLoadShipperMutate("id"),
   deleteOwnOpenLoad
 );
 
-router.get("/:id", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
-  const id = req.params.id;
-  if (!isUuid(id)) return sendError(res, 400, "Invalid load id");
-  const { rows } = await query(
-    `SELECT id, code, cargo, origin, destination, weight, vehicle_type AS "vehicleType",
-            expected_price AS "expectedPrice", pickup_date AS "pickupDate", deadline_hours AS "deadlineHours",
-            status, shipper_id AS "shipperId", assigned_carrier_id AS "assignedCarrierId",
-            created_at AS "createdAt", updated_at AS "updatedAt"
-     FROM loads
-     WHERE id = $1`,
-    [id]
-  );
-  const load = rows[0];
-  if (!load) return sendError(res, 404, "Not found");
-
-  if (!canReadLoad(load, req.auth)) return sendError(res, 403, "Forbidden");
-  return sendSuccess(res, 200, load);
-});
+router.get(
+  "/:id",
+  protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
+  requireLoadRead("id"),
+  async (req, res) => {
+    const load = req.loadRow;
+    return sendSuccess(res, 200, {
+      id: load.id,
+      code: load.code,
+      cargo: load.cargo,
+      origin: load.origin,
+      destination: load.destination,
+      weight: load.weight,
+      vehicleType: load.vehicle_type,
+      expectedPrice: load.expected_price,
+      pickupDate: load.pickup_date,
+      deadlineHours: load.deadline_hours,
+      status: load.status,
+      shipperId: load.shipper_id,
+      assignedCarrierId: load.assigned_carrier_id,
+      createdAt: load.created_at,
+      updatedAt: load.updated_at
+    });
+  }
+);
 
 async function createLoad(req, res) {
   try {

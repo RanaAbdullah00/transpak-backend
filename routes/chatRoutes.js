@@ -6,6 +6,8 @@ const { sendError, sendSuccess } = require("../utils/apiResponse");
 const { query: db } = require("../db/pool");
 const realtimeHub = require("../services/realtimeHub");
 const { assertChatAttachmentFromUserUpload } = require("../controllers/uploadController");
+const { canReadLoad, hasAccountRole } = require("../utils/resourceAuth");
+const { assertCarrierCanAccessLoad } = require("../utils/matchingEngine");
 
 const router = express.Router();
 
@@ -45,6 +47,33 @@ router.post(
       return sendError(res, 400, "Cannot start a chat with yourself");
     }
     const loadId = req.body.loadId ? String(req.body.loadId) : null;
+
+    if (loadId) {
+      const { rows: loadRows } = await db(
+        `SELECT id, shipper_id, assigned_carrier_id, status, weight, vehicle_type,
+                deadline_hours, deadline_minutes, created_at, pickup_date
+         FROM loads WHERE id = $1`,
+        [loadId]
+      );
+      const load = loadRows[0];
+      if (!load) return sendError(res, 404, "Load not found", null, "NOT_FOUND");
+      if (!canReadLoad(load, req.auth)) {
+        return sendError(res, 403, "Forbidden", null, "FORBIDDEN_RESOURCE");
+      }
+      if (hasAccountRole(req.auth, "carrier") && String(load.assigned_carrier_id || "") !== me) {
+        const match = await assertCarrierCanAccessLoad(me, load);
+        if (!match.ok) {
+          return sendError(res, match.status, match.message, null, match.code);
+        }
+      }
+      const shipperId = String(load.shipper_id || "");
+      const carrierId = String(load.assigned_carrier_id || "");
+      const peerOk = peer === shipperId || (carrierId && peer === carrierId);
+      const meOk = me === shipperId || (carrierId && me === carrierId);
+      if (!peerOk || !meOk) {
+        return sendError(res, 403, "Peer is not a party on this load", null, "FORBIDDEN_RESOURCE");
+      }
+    }
 
     const userA = me < peer ? me : peer;
     const userB = me < peer ? peer : me;
@@ -192,7 +221,14 @@ router.post(
       ...msg,
       clientMessageId: req.body.clientMessageId || null
     };
-    realtimeHub.emitToUser(peerId, "chat:message", payload);
+    const { rows: peerRows } = await db(`SELECT roles FROM users WHERE id = $1`, [peerId]);
+    const peerRoles = Array.isArray(peerRows[0]?.roles) ? peerRows[0].roles : [];
+    const commercial = peerRoles.filter((r) => r === "shipper" || r === "carrier");
+    if (commercial.length) {
+      commercial.forEach((r) => realtimeHub.emitToUserRole(peerId, r, "chat:message", payload));
+    } else {
+      realtimeHub.emitToUserRole(peerId, "admin", "chat:message", payload);
+    }
 
     return sendSuccess(res, 201, msg, "Sent");
   }
@@ -220,11 +256,17 @@ router.post(
        WHERE conversation_id = $1 AND sender_id <> $2`,
       [convId, uid]
     );
-    realtimeHub.emitToUser(
-      String(conv.user_a_id) === uid ? String(conv.user_b_id) : String(conv.user_a_id),
-      "chat:seen",
-      { conversationId: convId }
-    );
+    const peerId = String(conv.user_a_id) === uid ? String(conv.user_b_id) : String(conv.user_a_id);
+    const { rows: peerRows } = await db(`SELECT roles FROM users WHERE id = $1`, [peerId]);
+    const peerRoles = Array.isArray(peerRows[0]?.roles) ? peerRows[0].roles : [];
+    const commercial = peerRoles.filter((r) => r === "shipper" || r === "carrier");
+    if (commercial.length) {
+      commercial.forEach((r) =>
+        realtimeHub.emitToUserRole(peerId, r, "chat:seen", { conversationId: convId })
+      );
+    } else {
+      realtimeHub.emitToUserRole(peerId, "admin", "chat:seen", { conversationId: convId });
+    }
     return sendSuccess(res, 200, { ok: true });
   }
 );

@@ -15,6 +15,7 @@ async function api(method, urlPath, opts = {}) {
   }
   const headers = { Accept: "application/json" };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  if (opts.workspace) headers["X-TransPak-Workspace"] = String(opts.workspace);
   let body;
   if (opts.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -105,16 +106,21 @@ async function createOpenLoad(shipperToken, overrides = {}) {
 }
 
 async function placeBid(carrierToken, loadId, amount = 140000) {
-  const res = await api("POST", "/api/bids", {
-    token: carrierToken,
-    body: { loadId, amount }
-  });
+  const res = await placeBidRaw(carrierToken, loadId, amount);
   if (!res.ok || !res.payload?.id) {
     const err = new Error(res.message || `Place bid failed (${res.status})`);
     err.response = res;
     throw err;
   }
   return res.payload;
+}
+
+/** Raw bid POST — for concurrency / idempotency tests. */
+async function placeBidRaw(carrierToken, loadId, amount = 140000) {
+  return api("POST", "/api/bids", {
+    token: carrierToken,
+    body: { loadId, amount: Number(amount) }
+  });
 }
 
 async function acceptBid(shipperToken, bidId) {
@@ -132,6 +138,7 @@ module.exports = {
   defaultLoadBody,
   createOpenLoad,
   placeBid,
+  placeBidRaw,
   acceptBid,
   healthCheck
 };

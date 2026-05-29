@@ -124,7 +124,12 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       origin: corsOriginCheck,
       credentials: true,
       methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-TransPak-Workspace"
+      ],
       exposedHeaders: ["X-TransPak-Version", "X-TransPak-Build"]
     })
   );
@@ -167,6 +172,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         }
       }
     }
+    const { getOpsSnapshot } = require("../utils/opsTelemetry");
+    const realtimeHub = require("../services/realtimeHub");
     return res.json({
       success: true,
       message: "ok",
@@ -177,10 +184,15 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         commit: BUILD_ID,
         uptime: process.uptime(),
         db: dbState?.ready ? "ready" : "unavailable",
-        dbPing
+        dbPing,
+        sockets: realtimeHub.getConnectedSocketCount(),
+        ops: getOpsSnapshot({ includeRecent: false })
       }
     });
   });
+
+  const { rejectForbiddenBodyFields } = require("../middleware/rejectForbiddenBodyFields");
+  app.use("/api", rejectForbiddenBodyFields);
 
   app.use("/api", (req, res, next) => {
     if (req.path === "/health") return next();
@@ -193,36 +205,41 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     }
     return res.status(503).json({
       success: false,
-      message: "Database unavailable. Set DATABASE_URL on Render (Supabase Session pooler URI) and run: npm run db:migrate:otp",
+      message: isProd
+        ? "Service temporarily unavailable"
+        : "Database unavailable. Set DATABASE_URL on Render (Supabase Session pooler URI) and run: npm run db:migrate",
       code: "DATABASE_UNAVAILABLE",
-      data: {
-        databaseUrlConfigured: isDatabaseUrlConfigured(),
-        hint: "transpak-backend: npm run db:migrate:otp",
-        ...(isProd ? {} : { lastError: lastErr?.message || String(lastErr || "") })
-      }
+      data: isProd
+        ? null
+        : {
+            databaseUrlConfigured: isDatabaseUrlConfigured(),
+            hint: "transpak-backend: npm run db:migrate",
+            lastError: lastErr?.message || String(lastErr || "")
+          }
     });
   });
 
   app.use("/api/public", require("../routes/publicRoutes"));
   app.use("/api/auth", authRoutes);
-  app.use("/api/profile", profileRoutes);
-  app.use("/api/shipments", shipmentRoutes);
-  app.use("/api/loads", loadRoutes);
-  app.use("/api/bids", bidRoutes);
-  app.use("/api/fare", require("../routes/fareRoutes"));
-  app.use("/api/maps", require("../routes/mapRoutes"));
-  app.use("/api/carrier-space", require("../routes/carrierSpaceRoutes"));
-  app.use("/api/carrier-space", require("../routes/spaceBookingRoutes"));
-  app.use("/api/operations", require("../routes/operationsRoutes"));
+  const { forbidAdminOnlyCommercial } = require("../middleware/forbidAdminOnlyCommercial");
+  app.use("/api/profile", forbidAdminOnlyCommercial, profileRoutes);
+  app.use("/api/shipments", forbidAdminOnlyCommercial, shipmentRoutes);
+  app.use("/api/loads", forbidAdminOnlyCommercial, loadRoutes);
+  app.use("/api/bids", forbidAdminOnlyCommercial, bidRoutes);
+  app.use("/api/fare", forbidAdminOnlyCommercial, require("../routes/fareRoutes"));
+  app.use("/api/maps", forbidAdminOnlyCommercial, require("../routes/mapRoutes"));
+  app.use("/api/carrier-space", forbidAdminOnlyCommercial, require("../routes/carrierSpaceRoutes"));
+  app.use("/api/carrier-space", forbidAdminOnlyCommercial, require("../routes/spaceBookingRoutes"));
+  app.use("/api/operations", forbidAdminOnlyCommercial, require("../routes/operationsRoutes"));
   app.use("/api/admin", adminRoutes);
-  app.use("/api/reviews", reviewRoutes);
-  app.use("/api/ratings", reviewRoutes);
+  app.use("/api/reviews", forbidAdminOnlyCommercial, reviewRoutes);
+  app.use("/api/ratings", forbidAdminOnlyCommercial, reviewRoutes);
   app.use("/api/notifications", notificationRoutes);
-  app.use("/api/feedback", require("../routes/feedbackRoutes"));
-  app.use("/api/chat", chatRoutes);
-  app.use("/api/trucks", truckRoutes);
+  app.use("/api/feedback", forbidAdminOnlyCommercial, require("../routes/feedbackRoutes"));
+  app.use("/api/chat", forbidAdminOnlyCommercial, chatRoutes);
+  app.use("/api/trucks", forbidAdminOnlyCommercial, truckRoutes);
   app.use("/api/demo-video", demoVideoRoutes);
-  app.use("/api/disputes", disputeRoutes);
+  app.use("/api/disputes", forbidAdminOnlyCommercial, disputeRoutes);
   app.use("/api/translations", translationRoutes);
   app.use("/api/upload", uploadRoutes);
 
@@ -236,9 +253,9 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     console.warn("[api] 404", req.method, req.originalUrl);
     res.status(404).json({
       success: false,
-      message: "Route not found",
+      message: "Not found",
       code: "NOT_FOUND",
-      data: { method: req.method, path: req.originalUrl }
+      data: null
     });
   });
 

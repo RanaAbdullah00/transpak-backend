@@ -1,5 +1,6 @@
 const { verifyToken } = require("../utils/jwt");
 const { sendError } = require("../utils/apiResponse");
+const { recordAuthFailure } = require("../utils/opsTelemetry");
 const userRepo = require("../repositories/userRepo");
 const { isDemoAdminEmail } = require("../utils/demoAdmin");
 const { buildAuthContextFromDB, logAuthContext } = require("../utils/authContext");
@@ -11,6 +12,7 @@ async function requireAuth(req, res, next) {
     const [scheme, token] = authHeader.split(" ");
 
     if (scheme !== "Bearer" || !token) {
+      recordAuthFailure("missing_token");
       return sendError(res, 401, "Unauthorized");
     }
 
@@ -18,16 +20,19 @@ async function requireAuth(req, res, next) {
     try {
       decoded = verifyToken(token);
     } catch {
+      recordAuthFailure("invalid_token");
       return sendError(res, 401, "Unauthorized");
     }
 
     const userId = decoded?.sub;
     if (!userId) {
+      recordAuthFailure("missing_sub");
       return sendError(res, 401, "Unauthorized");
     }
 
     const ctx = await buildAuthContextFromDB(userId);
     if (!ctx?.user) {
+      recordAuthFailure("user_not_found");
       return sendError(res, 401, "Unauthorized");
     }
 

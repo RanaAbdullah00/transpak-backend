@@ -19,7 +19,12 @@ const INCREMENTAL_MIGRATIONS = [
   "015_load_deadline_minutes.sql",
   "016_load_route_and_location_log.sql",
   "017_audit_events.sql",
-  "018_query_performance_indexes.sql"
+  "018_query_performance_indexes.sql",
+  "019_truck_unique_constraints.sql",
+  "020_truck_fleet_status.sql",
+  "021_matching_engine_indexes.sql",
+  "022_fleet_lifecycle.sql",
+  "023_notifications_realtime.sql"
 ];
 
 async function runMigrations() {
