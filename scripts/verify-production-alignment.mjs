@@ -37,13 +37,26 @@ const REQUIRED_MIGRATIONS = [
 ];
 
 function localCommitFull() {
+  const backendDir = path.join(__dirname, "..");
+  const monorepoRoot = path.join(__dirname, "..", "..");
+  /** Render deploys github.com/.../transpak-backend — use nested repo HEAD when present. */
+  for (const cwd of [backendDir, monorepoRoot]) {
+    try {
+      return execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
+    } catch {
+      /* try next */
+    }
+  }
+  return "unknown";
+}
+
+function localCommitSource() {
+  const backendDir = path.join(__dirname, "..");
   try {
-    return execSync("git rev-parse HEAD", {
-      cwd: path.join(__dirname, "..", ".."),
-      encoding: "utf8"
-    }).trim();
+    execSync("git rev-parse HEAD", { cwd: backendDir, stdio: "pipe" });
+    return "transpak-backend (Render deploy repo)";
   } catch {
-    return "unknown";
+    return "monorepo root";
   }
 }
 
@@ -149,6 +162,8 @@ async function main() {
   printSection("Phase 1 — Deployment verification");
   const localFull = localCommitFull();
   const localNormalized = normalizeCommit(localFull);
+  console.log("Local git source:", localCommitSource());
+  console.log("Local git source:", localCommitSource());
   console.log("Local git HEAD (full):", localFull);
   console.log("Local git HEAD (normalized):", localNormalized);
 
