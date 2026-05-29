@@ -15,6 +15,7 @@ tmp/
 *.log
 coverage/
 dist/
+.render-build-stamp.json
 
 # OS / editor
 Thumbs.db

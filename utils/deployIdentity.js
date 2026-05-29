@@ -1,12 +1,24 @@
 /**
  * Deployment identity — build commit + schema guard version (no business logic).
  */
-const { execSync } = require("child_process");
+const fs = require("fs");
 const path = require("path");
+const { execSync } = require("child_process");
 const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.json"));
 const { SCHEMA_VERSION } = require("../db/schemaGuard");
-const { getSanitizedDatabaseInfo } = require("./dbSanitizedInfo");
+const { getSanitizedDatabaseInfo, formatSanitizedDatabaseLog } = require("./dbSanitizedInfo");
 const { normalizeCommit } = require("./normalizeCommit");
+
+const STAMP_PATH = path.join(__dirname, "..", ".render-build-stamp.json");
+
+function readBuildStamp() {
+  try {
+    const raw = fs.readFileSync(STAMP_PATH, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 function resolveGitCommitFull() {
   const fromEnv = String(
@@ -18,6 +30,16 @@ function resolveGitCommitFull() {
   if (fromEnv && fromEnv !== "local" && fromEnv !== "unknown") {
     return fromEnv;
   }
+
+  const stamp = readBuildStamp();
+  if (
+    stamp?.commitFull &&
+    stamp.commitFull !== "unknown" &&
+    (!process.env.RENDER_GIT_COMMIT || stamp.commitFull === process.env.RENDER_GIT_COMMIT)
+  ) {
+    return stamp.commitFull;
+  }
+
   try {
     return execSync("git rev-parse HEAD", {
       cwd: path.join(__dirname, ".."),
@@ -31,6 +53,7 @@ function resolveGitCommitFull() {
 
 const BUILD_COMMIT = resolveGitCommitFull();
 const BUILD_ID = normalizeCommit(BUILD_COMMIT) || "unknown";
+const BUILD_STAMP = readBuildStamp();
 
 /**
  * Runtime deployment status for /api/health (never blocks server).
@@ -50,32 +73,60 @@ function getDeployIdentity() {
     commitShort: normalizedCommit,
     commitFull: BUILD_COMMIT,
     normalizedCommit,
+    builtAt: BUILD_STAMP?.builtAt || null,
     schemaGuardVersion: SCHEMA_VERSION,
     expectedSchemaVersion: SCHEMA_VERSION,
     liveHealth: true,
     migrationSafe: true,
+    bootHealthWait: true,
     nodeEnv: process.env.NODE_ENV || "undefined",
-    databaseTarget: getSanitizedDatabaseInfo()
+    databaseTarget: getSanitizedDatabaseInfo(),
+    render: Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID)
   };
 }
 
 function logDeployIdentity() {
   const id = getDeployIdentity();
+  const dbLog = id.databaseTarget?.configured
+    ? formatSanitizedDatabaseLog(id.databaseTarget)
+    : "DATABASE_URL not set";
+  const deployedAt = new Date().toISOString();
+
   // eslint-disable-next-line no-console
-  console.log("[deploy] commit:", id.commitFull);
+  console.log(`[deploy] commit=${id.commitFull}`);
+  // eslint-disable-next-line no-console
+  console.log(`[deploy] time=${deployedAt}`);
+  // eslint-disable-next-line no-console
+  console.log(`[deploy] schema=${id.schemaGuardVersion}`);
+  // eslint-disable-next-line no-console
+  console.log(`[deploy] db=${dbLog}`);
+  if (BUILD_STAMP?.builtAt) {
+    // eslint-disable-next-line no-console
+    console.log(`[deploy] buildStamp=${BUILD_STAMP.builtAt} short=${BUILD_STAMP.commitShort}`);
+  }
   // eslint-disable-next-line no-console
   console.log("[deploy] runtime identity", {
-    commit: id.commit,
+    commitShort: id.commitShort,
     commitFull: id.commitFull,
+    normalizedCommit: id.normalizedCommit,
     appVersion: id.appVersion,
     schemaGuardVersion: id.schemaGuardVersion,
-    expectedSchemaVersion: id.expectedSchemaVersion,
     liveHealth: id.liveHealth,
     migrationSafe: id.migrationSafe,
-    database: id.databaseTarget?.configured
-      ? `host=${id.databaseTarget.host} db=${id.databaseTarget.database} provider=${id.databaseTarget.provider}`
-      : "DATABASE_URL not set"
+    bootHealthWait: id.bootHealthWait,
+    render: id.render
   });
+
+  const expected = String(process.env.EXPECTED_DEPLOY_COMMIT || "").trim();
+  if (expected && normalizeCommit(expected) !== id.normalizedCommit) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[deploy] DEPLOYMENT DRIFT DETECTED: EXPECTED_DEPLOY_COMMIT",
+      expected,
+      "!= running",
+      id.commitFull
+    );
+  }
 }
 
 module.exports = {
@@ -84,6 +135,7 @@ module.exports = {
   logDeployIdentity,
   resolveGitCommitFull,
   normalizeCommit,
+  readBuildStamp,
   BUILD_ID,
   BUILD_COMMIT
 };
