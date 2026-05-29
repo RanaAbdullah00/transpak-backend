@@ -88,6 +88,10 @@ function getConnectedSocketCount() {
   return 0;
 }
 
+function isEngineReady() {
+  return Boolean(io && io.engine);
+}
+
 function emitToTracking(refKey, event, payload) {
   if (!io || !refKey) return;
   try {
@@ -101,6 +105,7 @@ module.exports = {
   setIO,
   getIO,
   getConnectedSocketCount,
+  isEngineReady,
   workspaceRoom,
   emitToUser,
   emitToUserRole,

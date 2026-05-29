@@ -19,9 +19,9 @@ services:
     rootDir: .
     branch: main
     autoDeploy: true
-    buildCommand: rm -rf node_modules .render-build-stamp.json && npm ci && npm run build
+    buildCommand: rm -rf node_modules dist .render-build-stamp.json && npm ci && npm run build
     startCommand: npm run db:migrate && node server.js
-    healthCheckPath: /health
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production

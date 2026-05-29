@@ -237,6 +237,11 @@ async function start() {
   realtimeHub.setIO(io);
   registerSocketHandlers(io);
 
+  if (process.env.NODE_ENV === "production" && !realtimeHub.isEngineReady()) {
+    console.error("[server] Socket.io engine failed to initialize — aborting deploy boot");
+    process.exit(1);
+  }
+
   const mailPre = validateOutboundMailConfig();
   const mailLabel = mailPre.ok ? "enabled" : `disabled (${mailPre.reason})`;
 
@@ -305,6 +310,11 @@ async function start() {
       console.log(
         `TransPak backend running - version ${APP_VERSION} - build ${BUILD_ID} - build OK - port ${listenAttemptPort}`
       );
+
+      if (process.env.NODE_ENV === "production" && !realtimeHub.isEngineReady()) {
+        console.error("[server] Socket.io not ready after listen — failing deploy health");
+        process.exit(1);
+      }
 
       const { startMarketplaceExpiryScheduler } = require("../utils/loadExpiry");
       startMarketplaceExpiryScheduler({ dbReady: () => dbState.ready });

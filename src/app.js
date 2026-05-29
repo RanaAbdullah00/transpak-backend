@@ -227,6 +227,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         migrationRequired: dbHealth.migrationRequired,
         deploymentStatus,
         deploy,
+        socketEngine: realtimeHub.isEngineReady() ? "ready" : "missing",
         sockets: realtimeHub.getConnectedSocketCount(),
         ops: getOpsSnapshot({ includeRecent: false })
       }
