@@ -257,7 +257,7 @@ router.put(
           await notifyUser({
             receiverId: p.shipper_id,
             senderId: req.auth.userId,
-            roleType: "carrier",
+            roleType: "shipper",
             title: "DELIVERY_COMPLETED",
             type: "DELIVERY_COMPLETED",
             message: msg
@@ -267,7 +267,7 @@ router.put(
           await notifyUser({
             receiverId: p.assigned_carrier_id,
             senderId: req.auth.userId,
-            roleType: "shipper",
+            roleType: "carrier",
             title: "DELIVERY_COMPLETED",
             type: "DELIVERY_COMPLETED",
             message: msg

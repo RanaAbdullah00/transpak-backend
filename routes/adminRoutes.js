@@ -349,15 +349,24 @@ router.patch(
     const { rows: existing } = await query(`SELECT id, roles, active_role FROM users WHERE id = $1`, [userId]);
     if (!existing[0]) return sendError(res, 404, "User not found");
 
-    let roles = Array.isArray(existing[0].roles) ? [...existing[0].roles] : [];
-    if (rolesInput?.length) {
-      const allowed = rolesInput.filter((r) => ["shipper", "carrier", "admin"].includes(r));
-      if (!allowed.length) return sendError(res, 400, "Invalid roles");
-      roles = allowed;
+    const { sanitizeRolesForStorage, validateRoleMutation } = require("../utils/rolePolicy");
+    const currentUser = {
+      id: userId,
+      roles: existing[0].roles,
+      activeRole: existing[0].active_role
+    };
+
+    const policy = validateRoleMutation(
+      currentUser,
+      activeRole || existing[0].active_role,
+      rolesInput?.length ? rolesInput : null
+    );
+    if (!policy.ok) {
+      return sendError(res, 403, policy.message, null, policy.code);
     }
 
-    const nextActive = activeRole && roles.includes(activeRole) ? activeRole : roles[0] || existing[0].active_role;
-    if (!nextActive) return sendError(res, 400, "No valid active role");
+    const roles = policy.roles;
+    const nextActive = policy.activeRole;
 
     const { rows } = await query(
       `UPDATE users SET roles = $2::text[], active_role = $3, updated_at = now() WHERE id = $1

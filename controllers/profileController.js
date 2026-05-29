@@ -8,6 +8,7 @@ const { cleanupUploadedFiles } = require("../middleware/uploadProfileImages");
 const { safeDestroyReplacedUrl } = require("../utils/cloudinaryUrl");
 const { signToken } = require("../utils/jwt");
 const { authData } = require("../utils/authPayload");
+const { isAllowedImageUrl } = require("../utils/imageUrl");
 
 const CNIC_REGEX = /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/;
 const UPLOAD_FAIL_USER_MSG = "File upload failed, please try again";
@@ -198,6 +199,17 @@ async function updateProfile(req, res) {
       cnicImageBack: next.cnic_image_back,
       profileImage: next.profile_image
     });
+
+    for (const [field, val] of [
+      ["cnic_image", next.cnic_image],
+      ["cnic_image_back", next.cnic_image_back],
+      ["profile_image", next.profile_image]
+    ]) {
+      if (val && !isAllowedImageUrl(val)) {
+        cleanupUploadedFiles(req);
+        return sendError(res, 400, `Invalid image URL for ${field}`, null, "INVALID_IMAGE_URL");
+      }
+    }
 
     let rows;
     try {

@@ -61,7 +61,7 @@ describe("Security — centralized auth helpers", () => {
     const end = fn.indexOf("async function upsertDemoAdmin");
     const block = end > 0 ? fn.slice(0, end) : fn.slice(0, 1200);
     assert.ok(!block.includes("unnest(COALESCE(roles"));
-    assert.ok(block.includes("if (!roles.includes(role))"));
+    assert.ok(block.includes("validateRoleMutation"));
   });
 
   it("forbidAdminOnlyCommercial covers operations snapshot", () => {

@@ -156,6 +156,7 @@ router.post(
       senderId: req.auth.userId,
       roleType: "carrier",
       title: "SPACE_LISTED",
+      type: "SPACE_LISTED",
       message: `Capacity listed: ${origin} → ${destination}`
     });
 

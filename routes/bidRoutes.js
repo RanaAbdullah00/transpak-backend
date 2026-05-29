@@ -197,7 +197,7 @@ router.post(
       await notifyUser({
         receiverId: loadOwner[0].shipper_id,
         senderId: req.auth.userId,
-        roleType: "carrier",
+        roleType: "shipper",
         title: "SHIPPER_CONFIRMATION_REQUEST",
         type: "BID_RECEIVED",
         message: `Carrier bid PKR ${Number(amount)} — confirm to book`
@@ -241,7 +241,7 @@ router.put(
       await notifyUser({
         receiverId: bidMeta[0].carrier_id,
         senderId: req.auth.userId,
-        roleType: "shipper",
+        roleType: "carrier",
         title: "BID_REJECTED",
         type: "BID_REJECTED",
         message: "Your bid was declined by the shipper"
@@ -313,7 +313,7 @@ router.put(
       await notifyUser({
         receiverId: bid.carrier_id,
         senderId: req.auth.userId,
-        roleType: "shipper",
+        roleType: "carrier",
         title: "COUNTER_OFFERED",
         type: "COUNTER_OFFERED",
         message: `Shipper counter offer: PKR ${amount}`
@@ -406,7 +406,7 @@ router.put(
       await notifyUser({
         receiverId: bid.shipper_id,
         senderId: req.auth.userId,
-        roleType: "carrier",
+        roleType: "shipper",
         title: "COUNTER_OFFERED",
         type: "COUNTER_OFFERED",
         message: `Carrier counter offer: PKR ${amount}`
@@ -462,7 +462,7 @@ router.put(
       await notifyUser({
         receiverId: meta[0].shipper_id,
         senderId: req.auth.userId,
-        roleType: "carrier",
+        roleType: "shipper",
         title: "SHIPPER_CONFIRMATION_REQUEST",
         type: "BID_RECEIVED",
         message: `Carrier accepted your counter — PKR ${Number(meta[0].amount || 0)}`
@@ -668,7 +668,7 @@ router.put(
       await notifyUser({
         receiverId: bid.carrier_id,
         senderId: bid.shipper_id,
-        roleType: "shipper",
+        roleType: "carrier",
         title: "BID_ACCEPTED",
         type: "BID_ACCEPTED",
         message: "Your bid was accepted. Contract is active."
@@ -676,7 +676,7 @@ router.put(
       await notifyUser({
         receiverId: bid.shipper_id,
         senderId: bid.carrier_id,
-        roleType: "carrier",
+        roleType: "shipper",
         title: "CONTRACT_STARTED",
         type: "BID_ACCEPTED",
         message: "Load booked. You can now contact the shipper."

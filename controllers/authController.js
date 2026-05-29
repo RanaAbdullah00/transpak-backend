@@ -14,6 +14,8 @@ const {
 
 const { isDemoAdminEmail } = require("../utils/demoAdmin");
 const { resolveAuthUserForSession } = require("../utils/resolveAuthUser");
+const { resolveLoginActiveRole, canChangeActiveRole, isAdminAccount } = require("../utils/authSessionPolicy");
+const { notifyUser } = require("../utils/notifyEvent");
 const { isTransientDbError, classifyDbError } = require("../utils/dbErrors");
 const { writeAudit } = require("../utils/auditLog");
 
@@ -279,7 +281,7 @@ async function login(req, res) {
     const maybeError = validationErrorResponse(req, res);
     if (maybeError) return maybeError;
 
-    const { email, password, roleHint } = req.body;
+    const { email, password } = req.body;
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
     const row = await withDbRetry(() => userRepo.findRowByEmailWithPassword(normalizedEmail));
@@ -323,35 +325,35 @@ async function login(req, res) {
     let authUser = await withDbRetry(() => userRepo.findByEmail(normalizedEmail));
     if (!authUser) return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
 
-    if (isDemoAdminEmail(normalizedEmail)) {
-      authUser.activeRole = "admin";
-    } else {
-      const normalized = normalizeRolesAndActiveRole(authUser);
-      if (!normalized.ok) {
-        console.error("[auth.login] invalid or empty roles for user", normalizedEmail);
-        return sendError(res, 403, "Account configuration error");
-      }
-
-      if (roleHint) {
-        const hint = String(roleHint).trim().toLowerCase();
-        const allowed = userRepo.ALLOWED_ROLES;
-        if (allowed.includes(hint) && normalized.roles.includes(hint)) {
-          authUser.activeRole = hint;
-        } else {
-          authUser.activeRole = normalized.activeRole;
-        }
-      } else {
-        authUser.activeRole = normalized.activeRole;
-      }
+    authUser.activeRole = resolveLoginActiveRole(authUser, normalizedEmail);
+    if (!authUser.activeRole) {
+      return sendError(res, 403, "Account configuration error", null, "INVALID_ROLES");
     }
 
     if (authUser.activeRole) {
       await withDbRetry(() => userRepo.setActiveRole(authUser.id, authUser.activeRole));
     }
 
+    await withDbRetry(() => userRepo.enforceSingleRolePolicy(authUser.id));
+
     const refreshed = await withDbRetry(() => userRepo.findById(authUser.id));
     const sessionUser = await resolveAuthUserForSession(refreshed || authUser);
     const token = signToken(sessionUser);
+
+    try {
+      await notifyUser({
+        receiverId: sessionUser.id,
+        senderId: sessionUser.id,
+        roleType: sessionUser.activeRole,
+        title: "LOGIN_SUCCESS",
+        type: "LOGIN_SUCCESS",
+        message: "Signed in successfully"
+      });
+    } catch (notifyErr) {
+      // eslint-disable-next-line no-console
+      console.error("[auth.login] login notification failed:", notifyErr?.message || notifyErr);
+    }
+
     return sendSuccess(res, 200, loginAuthData(sessionUser, token), "Logged in");
   } catch (err) {
     const classified = classifyDbError(err);
@@ -373,8 +375,9 @@ async function login(req, res) {
 
 async function profile(req, res) {
   try {
-    const user = await userRepo.findById(req.auth.userId);
+    let user = await userRepo.findById(req.auth.userId);
     if (!user) return sendError(res, 401, "Unauthorized");
+    user = (await userRepo.enforceSingleRolePolicy(user.id)) || user;
     const sessionUser = await resolveAuthUserForSession(user);
     const token = signToken(sessionUser);
     return sendSuccess(res, 200, authData(sessionUser, token), "OK");
@@ -405,7 +408,26 @@ async function updateActiveRole(req, res) {
     return sendError(res, 403, "Role not available for this account", null, "ROLE_NOT_GRANTED");
   }
 
-  const updated = await userRepo.switchActiveRole(req.auth.userId, next);
+  if (!canChangeActiveRole(user, next)) {
+    if (isAdminAccount(user)) {
+      return sendError(
+        res,
+        403,
+        "Admin accounts cannot use shipper or carrier workspace",
+        null,
+        "ADMIN_ROLE_LOCKED"
+      );
+    }
+    return sendError(res, 403, "Role switching is disabled", null, "ROLE_SWITCH_DISABLED");
+  }
+
+  const { validateRoleMutation } = require("../utils/rolePolicy");
+  const policy = validateRoleMutation(user, next);
+  if (!policy.ok) {
+    return sendError(res, 403, policy.message, null, policy.code);
+  }
+
+  const updated = await userRepo.setRolesAndActive(req.auth.userId, policy.roles, policy.activeRole);
   if (!updated) {
     return sendError(res, 500, "Role update failed");
   }
@@ -432,41 +454,20 @@ async function addRoleToAccount(req, res) {
     if (maybeError) return maybeError;
 
     const next = String(req.body.role || "").trim().toLowerCase();
-    const registerable = userRepo.ALLOWED_ROLES.filter((r) => r !== "admin");
-    if (!registerable.includes(next)) {
-      return sendError(res, 400, "Invalid role", null, "INVALID_ROLE");
-    }
-
-    let user = await userRepo.findById(req.auth.userId);
+    const user = await userRepo.findById(req.auth.userId);
     if (!user) return sendError(res, 401, "Unauthorized");
 
-    if (userRepo.hasRole(user, next)) {
+    const { validateAddRole } = require("../utils/rolePolicy");
+    const check = validateAddRole(user, next);
+    if (!check.ok) {
+      return sendError(res, 403, check.message, null, check.code);
+    }
+    if (check.already) {
       const token = signToken(user);
       return sendSuccess(res, 200, authData(user, token), "Role already on account");
     }
 
-    if (!user.isProfileComplete) {
-      return sendError(
-        res,
-        403,
-        "Complete your current profile before adding another role",
-        null,
-        "PROFILE_INCOMPLETE"
-      );
-    }
-
-    user = await userRepo.addRole(user.id, next);
-    if (!user) return sendError(res, 500, "Could not add role");
-
-    const token = signToken(user);
-    void writeAudit({
-      actorUserId: req.auth.userId,
-      action: "role.added",
-      targetEntity: "user",
-      targetId: user.id,
-      metadata: { role: next }
-    });
-    return sendSuccess(res, 200, authData(user, token), "Role added successfully");
+    return sendError(res, 403, "Adding a second role is disabled", null, "ROLE_ADD_DISABLED");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[auth.addRole]", err?.message || err);
