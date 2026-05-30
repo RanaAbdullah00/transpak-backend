@@ -19,14 +19,22 @@ function normalizeRolesAndActiveRole(user) {
   return { ok: true, roles, activeRole: active };
 }
 
-/** Login workspace: admin always admin; commercial users use fixed DB role (no roleHint). */
-function resolveLoginActiveRole(user, email) {
+/** Login workspace: admin always admin; commercial users may pass roleHint at login. */
+function resolveLoginActiveRole(user, email, roleHint = null) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (isDemoAdminEmail(normalizedEmail) || isAdminAccount(user)) {
     return "admin";
   }
   const normalized = normalizeRolesAndActiveRole(user);
   if (!normalized.ok) return null;
+
+  if (roleHint) {
+    const hint = String(roleHint).trim().toLowerCase();
+    if ((hint === "shipper" || hint === "carrier") && userRepo.hasRole(user, hint)) {
+      return hint;
+    }
+  }
+
   const commercial = commercialRoles({ roles: normalized.roles });
   if (!commercial.length) return normalized.activeRole;
   if (commercial.length === 1) return commercial[0];
