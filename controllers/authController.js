@@ -281,7 +281,7 @@ async function login(req, res) {
     const maybeError = validationErrorResponse(req, res);
     if (maybeError) return maybeError;
 
-    const { email, password, roleHint } = req.body;
+    const { email, password } = req.body;
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
     const row = await withDbRetry(() => userRepo.findRowByEmailWithPassword(normalizedEmail));
@@ -326,7 +326,7 @@ async function login(req, res) {
     if (!authUser) return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
 
     const { sanitizeRolesForStorage } = require("../utils/rolePolicy");
-    const resolvedRole = resolveLoginActiveRole(authUser, normalizedEmail, roleHint);
+    const resolvedRole = resolveLoginActiveRole(authUser, normalizedEmail);
     if (!resolvedRole) {
       return sendError(res, 403, "Account configuration error", null, "INVALID_ROLES");
     }
@@ -338,8 +338,6 @@ async function login(req, res) {
     await withDbRetry(() =>
       userRepo.setRolesAndActive(authUser.id, sanitized.roles, sanitized.activeRole)
     );
-
-    await withDbRetry(() => userRepo.enforceSingleRolePolicy(authUser.id));
 
     const refreshed = await withDbRetry(() => userRepo.findById(authUser.id));
     const sessionUser = await resolveAuthUserForSession(refreshed || authUser);

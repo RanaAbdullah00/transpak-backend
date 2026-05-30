@@ -1,11 +1,11 @@
 /**
  * Single-role storage policy — backend is authoritative (no dual commercial, admin isolated).
  */
-const userRepo = require("../repositories/userRepo");
+const { normalizeRole, hasRole } = require("./roleConstants");
 
 function commercialOnly(roles) {
   return (Array.isArray(roles) ? roles : [])
-    .map((r) => userRepo.normalizeRole(r))
+    .map((r) => normalizeRole(r))
     .filter((r) => r === "shipper" || r === "carrier");
 }
 
@@ -16,7 +16,7 @@ function commercialOnly(roles) {
  */
 function sanitizeRolesForStorage(roles, activeRole = null) {
   const raw = Array.isArray(roles) ? roles : [];
-  const normalized = [...new Set(raw.map((r) => userRepo.normalizeRole(r)).filter(Boolean))];
+  const normalized = [...new Set(raw.map((r) => normalizeRole(r)).filter(Boolean))];
 
   if (normalized.includes("admin")) {
     return { roles: ["admin"], activeRole: "admin", ok: true };
@@ -24,11 +24,11 @@ function sanitizeRolesForStorage(roles, activeRole = null) {
 
   const commercial = commercialOnly(normalized);
   if (!commercial.length) {
-    const fallback = userRepo.normalizeRole(activeRole) || "shipper";
+    const fallback = normalizeRole(activeRole) || "shipper";
     return { roles: [fallback], activeRole: fallback, ok: true };
   }
 
-  const active = userRepo.normalizeRole(activeRole);
+  const active = normalizeRole(activeRole);
   const chosen = commercial.includes(active) ? active : commercial[0];
   return { roles: [chosen], activeRole: chosen, ok: true };
 }
@@ -42,7 +42,7 @@ function validateRoleMutation(user, nextActiveRole, nextRoles = null) {
   const proposedActive = nextActiveRole != null ? nextActiveRole : user.activeRole;
   const target = sanitizeRolesForStorage(proposedRoles, proposedActive);
 
-  if (userRepo.hasRole(user, "admin")) {
+  if (hasRole(user, "admin")) {
     if (target.activeRole !== "admin" || !target.roles.every((r) => r === "admin")) {
       return {
         ok: false,
@@ -50,7 +50,7 @@ function validateRoleMutation(user, nextActiveRole, nextRoles = null) {
         message: "Admin accounts cannot use shipper or carrier roles"
       };
     }
-    if (nextActiveRole && userRepo.normalizeRole(nextActiveRole) !== user.activeRole) {
+    if (nextActiveRole && normalizeRole(nextActiveRole) !== user.activeRole) {
       return { ok: false, code: "ROLE_SWITCH_DISABLED", message: "Role switching is disabled" };
     }
     return { ok: true, ...target };
@@ -66,7 +66,7 @@ function validateRoleMutation(user, nextActiveRole, nextRoles = null) {
     }
   }
 
-  if (nextActiveRole && userRepo.normalizeRole(nextActiveRole) !== userRepo.normalizeRole(user.activeRole)) {
+  if (nextActiveRole && normalizeRole(nextActiveRole) !== normalizeRole(user.activeRole)) {
     return { ok: false, code: "ROLE_SWITCH_DISABLED", message: "Role switching is disabled" };
   }
 
@@ -74,14 +74,14 @@ function validateRoleMutation(user, nextActiveRole, nextRoles = null) {
 }
 
 function validateAddRole(user, role) {
-  const r = userRepo.normalizeRole(role);
+  const r = normalizeRole(role);
   if (!r || r === "admin") {
     return { ok: false, code: "INVALID_ROLE", message: "Invalid role" };
   }
-  if (userRepo.hasRole(user, "admin")) {
+  if (hasRole(user, "admin")) {
     return { ok: false, code: "ADMIN_ROLE_LOCKED", message: "Admin accounts cannot add commercial roles" };
   }
-  if (userRepo.hasRole(user, r)) {
+  if (hasRole(user, r)) {
     return { ok: true, already: true };
   }
   const commercial = commercialOnly(user.roles);

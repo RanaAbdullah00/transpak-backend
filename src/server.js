@@ -134,7 +134,7 @@ async function ensureTranspakDemoAdmin() {
     await userRepo.upsertDemoAdmin({
       email,
       passwordHash,
-      roles: ["admin", "shipper", "carrier"],
+      roles: ["admin"],
       activeRole: "admin",
       phone,
       cnicNumber: cnic,

@@ -1,5 +1,6 @@
 const userRepo = require("../repositories/userRepo");
 const { isDemoAdminEmail } = require("./demoAdmin");
+const { normalizeRole } = require("./roleConstants");
 
 function isAdminAccount(user) {
   return Boolean(user && userRepo.hasRole(user, "admin"));
@@ -19,8 +20,8 @@ function normalizeRolesAndActiveRole(user) {
   return { ok: true, roles, activeRole: active };
 }
 
-/** Login workspace: admin always admin; commercial users may pass roleHint at login. */
-function resolveLoginActiveRole(user, email, roleHint = null) {
+/** Login workspace: admin always admin; commercial users use DB role only (never UI roleHint). */
+function resolveLoginActiveRole(user, email) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (isDemoAdminEmail(normalizedEmail) || isAdminAccount(user)) {
     return "admin";
@@ -28,18 +29,12 @@ function resolveLoginActiveRole(user, email, roleHint = null) {
   const normalized = normalizeRolesAndActiveRole(user);
   if (!normalized.ok) return null;
 
-  if (roleHint) {
-    const hint = String(roleHint).trim().toLowerCase();
-    if ((hint === "shipper" || hint === "carrier") && userRepo.hasRole(user, hint)) {
-      return hint;
-    }
-  }
-
   const commercial = commercialRoles({ roles: normalized.roles });
-  if (!commercial.length) return normalized.activeRole;
   if (commercial.length === 1) return commercial[0];
-  if (commercial.includes(normalized.activeRole)) return normalized.activeRole;
-  return commercial[0];
+  const dbActive = normalizeRole(normalized.activeRole);
+  if (dbActive && commercial.includes(dbActive)) return dbActive;
+  if (dbActive && normalized.roles.includes(dbActive)) return dbActive;
+  return commercial[0] || normalized.activeRole;
 }
 
 /** Admin locked to admin; commercial users cannot switch workspace. */

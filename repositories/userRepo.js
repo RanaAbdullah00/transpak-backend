@@ -1,18 +1,13 @@
 const { query, getPool } = require("../db/pool");
 const { sanitizeRolesForStorage } = require("../utils/rolePolicy");
+const { ALLOWED_ROLES, normalizeRole, hasRole } = require("../utils/roleConstants");
 
-const ALLOWED_ROLES = ["shipper", "carrier", "admin"];
-
-function normalizeRole(value) {
-  const v = String(value || "").trim().toLowerCase();
-  return ALLOWED_ROLES.includes(v) ? v : null;
+function normalizeRoleExport(value) {
+  return normalizeRole(value);
 }
 
-function hasRole(user, role) {
-  const r = normalizeRole(role);
-  if (!r || !user) return false;
-  const list = Array.isArray(user.roles) ? user.roles : [];
-  return list.includes(r);
+function hasRoleExport(user, role) {
+  return hasRole(user, role);
 }
 
 function toAuthUser(row) {
@@ -311,8 +306,8 @@ async function updatePasswordHashByEmail(email, passwordHash) {
 
 module.exports = {
   ALLOWED_ROLES,
-  normalizeRole,
-  hasRole,
+  normalizeRole: normalizeRoleExport,
+  hasRole: hasRoleExport,
   findById,
   findByEmail,
   findRowByEmailWithPassword,
