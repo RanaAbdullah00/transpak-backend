@@ -222,39 +222,46 @@ router.put(
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })()))],
   validate,
   async (req, res) => {
-    const bidId = req.params.id;
-    const { rows: bidRows } = await query(
-      `SELECT b.id, b.load_id, b.status, l.shipper_id
-       FROM bids b JOIN loads l ON l.id = b.load_id
-       WHERE b.id = $1`,
-      [bidId]
-    );
-    const bid = bidRows[0];
-    if (!bid) return sendError(res, 404, "Not found");
-    if (!canMutateBidAsShipper(bid, req.auth)) {
-      return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
-    }
-    assertBidTransition(bid.status, BID.REJECTED);
-    await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
-    const { rows: bidMeta } = await query(`SELECT carrier_id FROM bids WHERE id = $1`, [bidId]);
-    if (bidMeta[0]?.carrier_id) {
-      await notifyUser({
-        receiverId: bidMeta[0].carrier_id,
-        senderId: req.auth.userId,
-        roleType: "carrier",
-        title: "BID_REJECTED",
-        type: "BID_REJECTED",
-        message: "Your bid was declined by the shipper"
+    try {
+      const bidId = req.params.id;
+      const { rows: bidRows } = await query(
+        `SELECT b.id, b.load_id, b.status, l.shipper_id
+         FROM bids b JOIN loads l ON l.id = b.load_id
+         WHERE b.id = $1`,
+        [bidId]
+      );
+      const bid = bidRows[0];
+      if (!bid) return sendError(res, 404, "Not found");
+      if (!canMutateBidAsShipper(bid, req.auth)) {
+        return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
+      }
+      assertBidTransition(bid.status, BID.REJECTED);
+      await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
+      const { rows: bidMeta } = await query(`SELECT carrier_id FROM bids WHERE id = $1`, [bidId]);
+      if (bidMeta[0]?.carrier_id) {
+        await notifyUser({
+          receiverId: bidMeta[0].carrier_id,
+          senderId: req.auth.userId,
+          roleType: "carrier",
+          title: "BID_REJECTED",
+          type: "BID_REJECTED",
+          message: "Your bid was declined by the shipper"
+        });
+      }
+      void writeAudit({
+        actorUserId: req.auth.userId,
+        action: "bid.rejected",
+        targetEntity: "bid",
+        targetId: bidId,
+        metadata: { loadId: bid.load_id }
       });
+      return sendSuccess(res, 200, { ok: true, flowStatus: "REJECTED", status: "rejected" }, "Rejected");
+    } catch (err) {
+      if (err.code === "INVALID_BID_TRANSITION" || err.code === "INVALID_BID_STATE") {
+        return sendError(res, err.statusCode || 409, err.message, null, err.code);
+      }
+      return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
     }
-    void writeAudit({
-      actorUserId: req.auth.userId,
-      action: "bid.rejected",
-      targetEntity: "bid",
-      targetId: bidId,
-      metadata: { loadId: bid.load_id }
-    });
-    return sendSuccess(res, 200, { ok: true, flowStatus: "REJECTED" }, "Rejected");
   }
 );
 
@@ -679,7 +686,7 @@ router.put(
         roleType: "shipper",
         title: "CONTRACT_STARTED",
         type: "BID_ACCEPTED",
-        message: "Load booked. You can now contact the shipper."
+        message: "Load booked. You can now contact the carrier."
       });
 
       return sendSuccess(res, 200, { ok: true, bookingId, flowStatus: "ACCEPTED", loadFlowStatus: "ACTIVE" }, "Accepted");

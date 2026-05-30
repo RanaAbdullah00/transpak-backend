@@ -7,24 +7,45 @@ function isUuid(value) {
 }
 
 async function hasActiveContract(viewerId, targetId) {
-  const { rows: bidRows } = await query(
+  const { rows: acceptedBidRows } = await query(
     `SELECT 1 FROM bids b
      JOIN loads l ON l.id = b.load_id
-     WHERE (l.shipper_id = $1 AND b.carrier_id = $2)
-        OR (l.shipper_id = $2 AND b.carrier_id = $1)
+     WHERE b.status = 'accepted'
+       AND (
+         (l.shipper_id = $1 AND b.carrier_id = $2)
+         OR (l.shipper_id = $2 AND b.carrier_id = $1)
+       )
      LIMIT 1`,
     [viewerId, targetId]
   );
-  if (bidRows[0]) return true;
+  if (acceptedBidRows[0]) return true;
 
   const { rows: shipRows } = await query(
     `SELECT 1 FROM loads l
-     WHERE (l.shipper_id = $1 AND l.assigned_carrier_id = $2)
-        OR (l.shipper_id = $2 AND l.assigned_carrier_id = $1)
+     WHERE l.assigned_carrier_id IS NOT NULL
+       AND l.status IN ('booked', 'closed', 'delivered')
+       AND (
+         (l.shipper_id = $1 AND l.assigned_carrier_id = $2)
+         OR (l.shipper_id = $2 AND l.assigned_carrier_id = $1)
+       )
      LIMIT 1`,
     [viewerId, targetId]
   );
   if (shipRows[0]) return true;
+
+  const { rows: activeShipmentRows } = await query(
+    `SELECT 1 FROM shipments s
+     JOIN loads l ON l.id = s.load_id
+     WHERE l.assigned_carrier_id IS NOT NULL
+       AND s.status NOT IN ('cancelled')
+       AND (
+         (l.shipper_id = $1 AND l.assigned_carrier_id = $2)
+         OR (l.shipper_id = $2 AND l.assigned_carrier_id = $1)
+       )
+     LIMIT 1`,
+    [viewerId, targetId]
+  );
+  if (activeShipmentRows[0]) return true;
 
   const { rows: spaceRows } = await query(
     `SELECT 1 FROM carrier_space_requests r

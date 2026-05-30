@@ -281,8 +281,9 @@ async function login(req, res) {
     const maybeError = validationErrorResponse(req, res);
     if (maybeError) return maybeError;
 
-    const { email, password } = req.body;
+    const { email, password, roleHint: bodyRoleHint, role: bodyRole } = req.body;
     const normalizedEmail = String(email || "").trim().toLowerCase();
+    const roleHint = String(bodyRoleHint || bodyRole || "").trim().toLowerCase();
 
     const row = await withDbRetry(() => userRepo.findRowByEmailWithPassword(normalizedEmail));
     if (!row) {
@@ -326,7 +327,15 @@ async function login(req, res) {
     if (!authUser) return sendError(res, 401, "Invalid credentials", null, "INVALID_CREDENTIALS");
 
     const { sanitizeRolesForStorage } = require("../utils/rolePolicy");
-    const resolvedRole = resolveLoginActiveRole(authUser, normalizedEmail);
+    if (!isAdminAccount(authUser) && !isDemoAdminEmail(normalizedEmail)) {
+      if (roleHint && !["shipper", "carrier"].includes(roleHint)) {
+        return sendError(res, 400, "Invalid role", null, "INVALID_ROLE");
+      }
+      if (roleHint && !authUser.roles.map((r) => String(r).toLowerCase()).includes(roleHint)) {
+        return sendError(res, 403, "Invalid credentials for selected role", null, "WRONG_ROLE");
+      }
+    }
+    const resolvedRole = resolveLoginActiveRole(authUser, normalizedEmail, roleHint);
     if (!resolvedRole) {
       return sendError(res, 403, "Account configuration error", null, "INVALID_ROLES");
     }

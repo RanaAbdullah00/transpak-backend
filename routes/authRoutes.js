@@ -140,7 +140,8 @@ router.post(
   [
     body("email").trim().isEmail().withMessage("Valid email is required"),
     body("password").isLength({ min: 1 }).withMessage("Password is required"),
-    body("roleHint").optional().trim().toLowerCase().isIn(allowedRoles).withMessage("Invalid roleHint")
+    body("roleHint").optional().trim().toLowerCase().isIn(allowedRoles).withMessage("Invalid roleHint"),
+    body("role").optional().trim().toLowerCase().isIn(allowedRoles).withMessage("Invalid role")
   ],
   asyncHandler(login)
 );

@@ -20,8 +20,8 @@ function normalizeRolesAndActiveRole(user) {
   return { ok: true, roles, activeRole: active };
 }
 
-/** Login workspace: admin always admin; commercial users use DB role only (never UI roleHint). */
-function resolveLoginActiveRole(user, email) {
+/** Login workspace: admin always admin; commercial users must match roleHint when provided. */
+function resolveLoginActiveRole(user, email, roleHint) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (isDemoAdminEmail(normalizedEmail) || isAdminAccount(user)) {
     return "admin";
@@ -30,6 +30,12 @@ function resolveLoginActiveRole(user, email) {
   if (!normalized.ok) return null;
 
   const commercial = commercialRoles({ roles: normalized.roles });
+  const hint = normalizeRole(roleHint);
+  if (hint && hint !== "admin") {
+    if (!commercial.includes(hint)) return null;
+    return hint;
+  }
+
   if (commercial.length === 1) return commercial[0];
   const dbActive = normalizeRole(normalized.activeRole);
   if (dbActive && commercial.includes(dbActive)) return dbActive;
