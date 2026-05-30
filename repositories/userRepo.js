@@ -10,13 +10,27 @@ function hasRoleExport(user, role) {
   return hasRole(user, role);
 }
 
+function normalizeRolesArray(roles) {
+  if (Array.isArray(roles)) return roles.filter(Boolean);
+  const s = String(roles || '').trim();
+  if (!s) return [];
+  if (s.startsWith('{') && s.endsWith('}')) {
+    return s
+      .slice(1, -1)
+      .split(',')
+      .map((r) => r.trim().replace(/^"|"$/g, ''))
+      .filter(Boolean);
+  }
+  return [s];
+}
+
 function toAuthUser(row) {
   if (!row) return null;
   return {
     id: row.id,
     _id: row.id,
     email: row.email,
-    roles: Array.isArray(row.roles) ? row.roles : [],
+    roles: normalizeRolesArray(row.roles),
     activeRole: row.active_role,
     blocked: Boolean(row.blocked),
     verified: Boolean(row.verified),

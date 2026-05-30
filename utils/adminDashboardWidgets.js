@@ -26,7 +26,15 @@ async function runWidget(widget, fn) {
       widget,
       data: null,
       durationMs,
-      error: { code, message: "Widget data temporarily unavailable" }
+      error: {
+        code,
+        message:
+          code === '42P01' || code === '42703'
+            ? 'Database schema mismatch'
+            : code === 'ECONNREFUSED' || code === 'ENOTFOUND'
+              ? 'Database unreachable'
+              : 'Query failed'
+      }
     };
   }
 }
@@ -68,6 +76,11 @@ async function fetchUsersWidget() {
     ]);
 
     const n = (v) => (v === null ? null : v);
+    const normalizeUserRoles = (rows) =>
+      (Array.isArray(rows) ? rows : []).map((u) => ({
+        ...u,
+        roles: Array.isArray(u.roles) ? u.roles : u.roles ? [String(u.roles)] : []
+      }));
     return {
       stats: {
         totalUsers: n(totalUsers),
@@ -80,7 +93,7 @@ async function fetchUsersWidget() {
         registeredTrucks: n(registeredTrucks),
         notificationsToday: n(notificationsToday)
       },
-      recentUsers,
+      recentUsers: normalizeUserRoles(recentUsers),
       partialFailure: [totalUsers, shipperAccounts].some((v) => v === null)
     };
   });
