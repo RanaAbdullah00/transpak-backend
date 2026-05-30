@@ -350,7 +350,7 @@ async function login(req, res) {
         roleType: sessionUser.activeRole,
         title: "LOGIN_SUCCESS",
         type: "LOGIN_SUCCESS",
-        message: "Signed in successfully"
+        message: `Welcome back ${String(sessionUser.fullName || sessionUser.name || sessionUser.email || "there").trim().split("@")[0]}`
       });
     } catch (notifyErr) {
       // eslint-disable-next-line no-console
@@ -470,7 +470,20 @@ async function addRoleToAccount(req, res) {
       return sendSuccess(res, 200, authData(user, token), "Role already on account");
     }
 
-    return sendError(res, 403, "Adding a second role is disabled", null, "ROLE_ADD_DISABLED");
+    const updated = await userRepo.addRole(req.auth.userId, next);
+    if (!updated) {
+      return sendError(res, 500, "Failed to add role", null, "ROLE_ADD_FAILED");
+    }
+
+    const token = signToken(updated);
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "role.added",
+      targetEntity: "user",
+      targetId: req.auth.userId,
+      metadata: { role: next }
+    });
+    return sendSuccess(res, 200, authData(updated, token), "Role added");
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[auth.addRole]", err?.message || err);

@@ -6,6 +6,13 @@
 
 const { clientMessage, sanitizeErrorData } = require("./safeApiError");
 
+function resolveErrorType(status) {
+  if (status === 401 || status === 403) return "AUTH";
+  if (status >= 500) return "SERVER";
+  if (status >= 400) return "VALIDATION";
+  return "SERVER";
+}
+
 function sendSuccess(res, statusCode, data, message = "OK", code = null) {
   const payload = {
     success: true,
@@ -29,12 +36,16 @@ function sendError(res, statusCode, message, data = null, code = null, meta = nu
   const resolvedCode =
     code ||
     (status >= 500 ? "SERVER_ERROR" : status === 404 ? "NOT_FOUND" : status === 403 ? "FORBIDDEN" : "ERROR");
+  const endpoint = String(res.req?.originalUrl || res.req?.url || "");
   const payload = {
     success: false,
     code: resolvedCode,
     message: clientMessage(status, message),
     data: sanitizeErrorData(data),
-    error: resolvedCode
+    error: resolvedCode,
+    endpoint,
+    status,
+    type: resolveErrorType(status)
   };
   if (meta && typeof meta === "object") {
     if (meta.errors !== undefined) payload.errors = meta.errors;

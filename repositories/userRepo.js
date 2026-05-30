@@ -11,17 +11,20 @@ function hasRoleExport(user, role) {
 }
 
 function normalizeRolesArray(roles) {
-  if (Array.isArray(roles)) return roles.filter(Boolean);
-  const s = String(roles || '').trim();
-  if (!s) return [];
-  if (s.startsWith('{') && s.endsWith('}')) {
-    return s
-      .slice(1, -1)
-      .split(',')
-      .map((r) => r.trim().replace(/^"|"$/g, ''))
-      .filter(Boolean);
-  }
-  return [s];
+  const raw = (() => {
+    if (Array.isArray(roles)) return roles.filter(Boolean);
+    const s = String(roles || '').trim();
+    if (!s) return [];
+    if (s.startsWith('{') && s.endsWith('}')) {
+      return s
+        .slice(1, -1)
+        .split(',')
+        .map((r) => r.trim().replace(/^"|"$/g, ''))
+        .filter(Boolean);
+    }
+    return [s];
+  })();
+  return [...new Set(raw.map((r) => normalizeRole(r)).filter(Boolean))];
 }
 
 function toAuthUser(row) {
@@ -134,7 +137,11 @@ async function addRole(userId, role) {
   const check = validateAddRole(existing, r);
   if (!check.ok) return null;
   if (check.already) return existing;
-  return setRolesAndActive(userId, [r], r);
+  const merged = [
+    ...new Set([...(existing.roles || []).map(normalizeRole).filter(Boolean), r])
+  ];
+  const sanitized = sanitizeRolesForStorage(merged, r);
+  return setRolesAndActive(userId, sanitized.roles, sanitized.activeRole);
 }
 
 async function setRolesAndActive(userId, roles, activeRole) {
@@ -150,7 +157,7 @@ async function setRolesAndActive(userId, roles, activeRole) {
   return toAuthUser(rows[0]);
 }
 
-/** Repair legacy dual-role / admin+commercial rows at login. */
+/** Repair invalid role rows (admin+commercial contamination, unknown roles). */
 async function enforceSingleRolePolicy(userId) {
   const user = await findById(userId);
   if (!user) return null;

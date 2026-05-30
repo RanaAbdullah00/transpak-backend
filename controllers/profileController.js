@@ -81,7 +81,9 @@ async function getProfile(req, res) {
       id: user.id,
       email: user.email,
       activeRole: user.activeRole,
-      roles: Array.isArray(user.roles) ? user.roles : [],
+      roles: Array.isArray(user.roles)
+        ? user.roles.map((r) => String(r || '').trim().toLowerCase()).filter(Boolean)
+        : [],
       full_name: user.fullName,
       phone: user.phone,
       cnic_number: user.cnicNumber,

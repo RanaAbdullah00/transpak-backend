@@ -11,17 +11,19 @@ function roleFlags(roles) {
  * Supports plain objects from userRepo (PostgreSQL) and legacy Mongoose `toAuthJSON()`.
  */
 function normalizeRolesList(roles) {
-  if (Array.isArray(roles)) return roles.filter(Boolean);
+  if (Array.isArray(roles)) {
+    return roles.map((r) => String(r || '').trim().toLowerCase()).filter(Boolean);
+  }
   const s = String(roles || '').trim();
   if (!s) return [];
   if (s.startsWith('{') && s.endsWith('}')) {
     return s
       .slice(1, -1)
       .split(',')
-      .map((r) => r.trim().replace(/^"|"$/g, ''))
+      .map((r) => r.trim().replace(/^"|"$/g, '').toLowerCase())
       .filter(Boolean);
   }
-  return [s];
+  return [s.toLowerCase()];
 }
 
 function serializeAuthUser(user) {
@@ -43,8 +45,9 @@ function serializeAuthUser(user) {
     fullName: user.fullName || user.name || "",
     phone: user.phone || "",
     cnicNumber: user.cnicNumber || user.cnic || "",
-    cnicImage: user.cnicImage || "",
-    profileImage: user.profileImage || "",
+    cnicImage: user.cnicImage || user.cnic_image || "",
+    cnicImageBack: user.cnicImageBack || user.cnic_image_back || "",
+    profileImage: user.profileImage || user.profile_image || "",
     profileComplete: Boolean(user.isProfileComplete ?? user.profileComplete)
   };
 }

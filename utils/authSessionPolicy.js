@@ -37,13 +37,21 @@ function resolveLoginActiveRole(user, email) {
   return commercial[0] || normalized.activeRole;
 }
 
-/** Admin locked to admin; commercial users cannot switch workspace. */
+/** Admin locked to admin; commercial users may switch between granted roles. */
 function canChangeActiveRole(user, nextRole) {
   const next = String(nextRole || "").trim().toLowerCase();
   if (!next) return false;
   if (isAdminAccount(user)) return next === "admin";
-  const current = String(user.activeRole || "").trim().toLowerCase();
-  return current === next;
+  const roles = (Array.isArray(user?.roles) ? user.roles : []).map((r) =>
+    String(r || "")
+      .trim()
+      .toLowerCase()
+  );
+  if (!roles.includes(next)) return false;
+  const current = String(user.activeRole || "")
+    .trim()
+    .toLowerCase();
+  return current !== next;
 }
 
 async function resolveAuthUserForSession(user) {

@@ -40,12 +40,16 @@ function globalErrorMiddleware(err, req, res, next) {
     console.error("[api] error", req.method, req.originalUrl, isProd ? code : err?.message || err);
   }
 
+  const endpoint = String(req.originalUrl || req.url || "");
   const payload = {
     success: false,
     code,
     message,
     data: sanitizeErrorData(err.data),
-    error: code
+    error: code,
+    endpoint,
+    status,
+    type: status === 401 || status === 403 ? "AUTH" : status >= 500 ? "SERVER" : status >= 400 ? "VALIDATION" : "SERVER"
   };
 
   return res.status(status).json(payload);
