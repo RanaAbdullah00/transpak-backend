@@ -54,44 +54,18 @@ function parseCorsOriginsFromEnv() {
 function isAllowedCorsOrigin(origin, allowedOriginsList) {
   if (!origin) return true;
   if (allowedOriginsList.includes(origin)) return true;
-  // Local laptop dev: any Vite port when API is not running on Render/Railway/Fly.
-  if (!isHostedOnPaas() && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+  // Cloudflare Pages — any preview/production URL (*.pages.dev); hash changes per deploy.
+  if (/^https:\/\/[a-z0-9.-]+\.pages\.dev$/i.test(origin)) {
+    return true;
+  }
+  // Local dev (Vite) — any localhost / 127.0.0.1 port.
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
     return true;
   }
   return false;
 }
 
-function createCorsOriginCallback(allowedOriginsList) {
-  return (origin, callback) => {
-    if (isAllowedCorsOrigin(origin, allowedOriginsList)) {
-      return callback(null, true);
-    }
-    // eslint-disable-next-line no-console
-    console.warn("[cors] blocked origin:", origin || "(none)", "allowed:", allowedOriginsList.length);
-    return callback(null, false);
-  };
-}
-
-function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
-  const app = express();
-
-  app.set("trust proxy", 1);
-  app.use(deployHeaders);
-  app.use(requestLogger);
-
-  app.use(
-    helmet({
-      crossOriginResourcePolicy: { policy: "cross-origin" }
-    })
-  );
-  const jsonLimit = process.env.JSON_BODY_LIMIT || "5mb";
-  app.use(express.json({ limit: jsonLimit }));
-  app.use(express.urlencoded({ extended: false }));
-
-  if (uploadsDir) {
-    app.use("/uploads", express.static(uploadsDir, { fallthrough: false }));
-  }
-
+function buildCorsMiddlewareConfig() {
   const isProd = process.env.NODE_ENV === "production";
   const envOrigins = parseCorsOriginsFromEnv();
   const localDevOrigins = [
@@ -110,7 +84,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   if (isProd && allowedOriginsList.length === 0) {
     console.warn(
-      "[cors] NODE_ENV=production but CORS_ORIGIN / FRONTEND_URL / VITE_APP_ORIGIN / CORS_EXTRA_ORIGINS are empty — browser clients will be rejected unless Origin is absent."
+      "[cors] CORS_ORIGIN env empty — relying on dynamic *.pages.dev and localhost rules."
     );
   }
 
@@ -119,20 +93,64 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
       ? (origin, callback) => callback(null, true)
       : createCorsOriginCallback(allowedOriginsList);
 
+  const corsOptions = {
+    origin: corsOriginCheck,
+    credentials: true,
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "X-TransPak-Workspace",
+      "X-TransPak-User-Id"
+    ],
+    exposedHeaders: ["X-TransPak-Version", "X-TransPak-Build"],
+    optionsSuccessStatus: 204,
+    preflightContinue: false,
+    maxAge: 86400
+  };
+
+  return { corsOptions, corsOriginCheck, allowReflectAnyOrigin, allowedOriginsList };
+}
+
+function createCorsOriginCallback(allowedOriginsList) {
+  return (origin, callback) => {
+    if (isAllowedCorsOrigin(origin, allowedOriginsList)) {
+      return callback(null, true);
+    }
+    // eslint-disable-next-line no-console
+    console.warn("[cors] blocked origin:", origin || "(none)", "allowed:", allowedOriginsList.length);
+    return callback(null, false);
+  };
+}
+
+function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
+  const app = express();
+
+  app.set("trust proxy", 1);
+
+  const { corsOptions, corsOriginCheck, allowReflectAnyOrigin, allowedOriginsList } =
+    buildCorsMiddlewareConfig();
+
+  // CORS must run before auth, body parsers, and rate limits so OPTIONS preflight succeeds.
+  app.use(cors(corsOptions));
+  app.options(/.*/, cors(corsOptions));
+
+  app.use(deployHeaders);
+  app.use(requestLogger);
+
   app.use(
-    cors({
-      origin: corsOriginCheck,
-      credentials: true,
-      methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-      allowedHeaders: [
-        "Content-Type",
-        "Authorization",
-        "X-Requested-With",
-        "X-TransPak-Workspace"
-      ],
-      exposedHeaders: ["X-TransPak-Version", "X-TransPak-Build"]
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" }
     })
   );
+  const jsonLimit = process.env.JSON_BODY_LIMIT || "5mb";
+  app.use(express.json({ limit: jsonLimit }));
+  app.use(express.urlencoded({ extended: false }));
+
+  if (uploadsDir) {
+    app.use("/uploads", express.static(uploadsDir, { fallthrough: false }));
+  }
 
   app.get("/", (req, res) => {
     res.status(200).json({
@@ -238,6 +256,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api", rejectForbiddenBodyFields);
 
   app.use("/api", (req, res, next) => {
+    if (req.method === "OPTIONS") return next();
     if (req.path === "/health") return next();
     if (dbState?.ready) return next();
     const lastErr = dbState?.error;
@@ -304,6 +323,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   app.use(globalErrorMiddleware);
 
+  const isProd = process.env.NODE_ENV === "production";
   const socketCorsOrigin =
     allowReflectAnyOrigin && !isProd ? true : createCorsOriginCallback(allowedOriginsList);
 

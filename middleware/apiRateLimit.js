@@ -6,6 +6,7 @@ const globalApiLimiter = rateLimit({
   max: Number(process.env.API_RATE_LIMIT_MAX || 500),
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  skip: (req) => req.method === "OPTIONS",
   message: {
     success: false,
     message: "Too many requests, please try again later",

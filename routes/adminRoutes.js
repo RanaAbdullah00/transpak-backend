@@ -118,6 +118,10 @@ router.get("/stats", async (req, res) => {
 const { getAdminDashboardLive } = require("../utils/adminDashboardHandler");
 router.use("/dashboard/widgets", adminDashboardWidgetRoutes);
 router.use("/fleet", adminFleetRoutes);
+
+const adminFleet = require("../src/controllers/adminFleetController");
+router.get("/trucks", adminFleet.listValidators, adminFleet.validate, asyncHandler(adminFleet.list));
+
 router.get("/dashboard/live", getAdminDashboardLive);
 router.get("/dashboard", getAdminDashboardLive);
 

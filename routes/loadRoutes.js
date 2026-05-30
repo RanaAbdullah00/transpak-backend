@@ -138,8 +138,8 @@ async function updateLoad(req, res) {
       if (!isISODateOnly(pickup)) return sendError(res, 400, "pickupDate must be YYYY-MM-DD");
       const today = startOfTodayUTC();
       const pickupDt = new Date(`${pickup}T00:00:00.000Z`);
-      if (!(pickupDt.getTime() > today.getTime())) {
-        return sendError(res, 400, "Pickup date must be in the future");
+      if (!(pickupDt.getTime() >= today.getTime())) {
+        return sendError(res, 400, "Pickup date cannot be in the past", null, "INVALID_PICKUP_DATE");
       }
       nextPickupDate = pickup;
     }
@@ -286,8 +286,8 @@ async function createLoad(req, res) {
 
   const today = startOfTodayUTC();
   const pickupDt = new Date(`${pickup}T00:00:00.000Z`);
-  if (!(pickupDt.getTime() > today.getTime())) {
-    return sendError(res, 400, "Pickup date must be in the future");
+  if (pickupDt.getTime() < today.getTime()) {
+    return sendError(res, 400, "Pickup date cannot be in the past", null, "INVALID_PICKUP_DATE");
   }
 
   const code = generateCode();

@@ -32,7 +32,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGIN
-        value: "https://cb3857ee.transpak-frontend.pages.dev,https://626c52a8.transpak-frontend.pages.dev,https://20f26555.transpak-frontend.pages.dev,https://transpak-backend-1.onrender.com"
+        value: "https://cb3857ee.transpak-frontend.pages.dev,https://626c52a8.transpak-frontend.pages.dev,https://20f26555.transpak-frontend.pages.dev,https://1c7c2150.transpak-frontend.pages.dev,https://transpak-backend-1.onrender.com"
       - key: CORS_EXTRA_ORIGINS
         value: "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173"
       - key: PG_CONNECTION_TIMEOUT_MS

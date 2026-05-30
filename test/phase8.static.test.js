@@ -82,8 +82,14 @@ describe("Phase 8 — deployment headers", () => {
     assert.ok(src.includes("helmet"));
   });
 
-  it("CORS allows workspace header", () => {
+  it("CORS runs before API routes and allows required headers", () => {
     const src = read("src/app.js");
+    const corsIdx = src.indexOf("app.use(cors(corsOptions))");
+    const apiIdx = src.indexOf('app.use("/api", globalApiLimiter)');
+    assert.ok(corsIdx >= 0 && apiIdx > corsIdx, "CORS middleware must run before /api rate limiter");
     assert.ok(src.includes("X-TransPak-Workspace"));
+    assert.ok(src.includes("X-TransPak-User-Id"));
+    assert.ok(src.includes(".pages.dev"));
+    assert.ok(src.includes("optionsSuccessStatus"));
   });
 });
