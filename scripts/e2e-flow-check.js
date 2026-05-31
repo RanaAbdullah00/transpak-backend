@@ -1,11 +1,15 @@
 /**
- * API-level E2E smoke: shipper post load → carrier bid → accept → tracking route.
- * Usage: node scripts/e2e-flow-check.mjs [baseUrl]
+ * API-level E2E smoke: shipper post load → carrier bid → tracking route.
+ * Usage: node scripts/e2e-flow-check.js [baseUrl]
  */
 require("dotenv").config();
 const axios = require("axios");
 
-const BASE = (process.argv[2] || "http://127.0.0.1:10000").replace(/\/$/, "");
+const BASE = (
+  process.argv[2] ||
+  process.env.QA_BASE_URL ||
+  "https://transpak-backend-1.onrender.com"
+).replace(/\/$/, "");
 
 async function login(email, password, roleHint) {
   const res = await axios.post(`${BASE}/api/auth/login`, {
@@ -41,7 +45,7 @@ async function main() {
     console.log(
       "[e2e] Set E2E_SHIPPER_EMAIL, E2E_SHIPPER_PASSWORD, E2E_CARRIER_EMAIL, E2E_CARRIER_PASSWORD in .env"
     );
-    console.log("[e2e] Skipping full flow — running ORS + health only.");
+    console.log("[e2e] Skipping full flow — running health only.");
     const health = await axios.get(`${BASE}/api/health`);
     console.log("[e2e] health", health.data?.data?.db);
     process.exit(0);
@@ -75,7 +79,8 @@ async function main() {
   console.log("[e2e] route", {
     points: route?.coordinates?.length,
     source: route?.source,
-    fallback: route?.fallback
+    fallback: route?.fallback,
+    distanceKm: route?.distanceKm
   });
 
   const carrier = await login(carrierEmail, carrierPass, "carrier");
@@ -93,7 +98,8 @@ async function main() {
   console.log("[e2e] tracking", {
     refKey: track?.refKey,
     routePoints: track?.liveTrackingMap?.coordinates?.length,
-    status: track?.tracking?.status
+    status: track?.tracking?.status,
+    distanceKm: track?.distanceKm
   });
 
   console.log("[e2e] OK — extend with bid accept when E2E credentials support it.");

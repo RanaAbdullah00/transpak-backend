@@ -32,7 +32,7 @@
     "check:schema": "node scripts/qa-schema-check.js",
     "check:api-smoke": "node scripts/qa-api-smoke.js",
     "check:ors": "node scripts/verify-ors-route.js",
-    "check:e2e-flow": "node scripts/e2e-flow-check.mjs",
+    "check:e2e-flow": "node scripts/e2e-flow-check.js",
     "db:migrate:otp": "node scripts/applyOtpMigrations.js",
     "db:migrate": "node scripts/run-migrations.js",
     "db:ensure-notifications": "node scripts/ensureNotificationSchema.js",
