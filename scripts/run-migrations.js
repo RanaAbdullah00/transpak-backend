@@ -19,6 +19,10 @@ main().catch(async (err) => {
   if (err?.code === "MIGRATION_LOCK_HELD" || err instanceof MigrationLockHeldError) {
     console.log("[db:migrate] skipped — another migration runner holds the lock");
     await endPool().catch(() => {});
+    if (process.env.NODE_ENV === "production") {
+      console.error("[db:migrate] refusing to continue in production without migrations");
+      process.exit(1);
+    }
     process.exit(0);
   }
   console.error("[db:migrate] failed:", err?.message || err);
