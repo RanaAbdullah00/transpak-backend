@@ -1,5 +1,5 @@
 const { query } = require("../db/pool");
-const { findCity } = require("./geoDistance");
+const { findCity, distanceBetweenCities } = require("./geoDistance");
 const { normalizeShipmentStatus } = require("./shipmentStatus");
 const { computeLifecycleStage } = require("./logisticsLifecycle");
 
@@ -76,11 +76,13 @@ async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
   }
 
   const { ts: _dropTs, ...safeExtra } = extra || {};
+  const distanceKm = distanceBetweenCities(origin, destination);
   return {
     loadId: String(load.id),
     refKey: trackingRefKey(load),
     origin,
     destination,
+    distanceKm: distanceKm != null && distanceKm > 0 ? distanceKm : null,
     lifecycleStage: computeLifecycleStage({
       loadStatus: load.status,
       shipmentStatus: shipment.status,

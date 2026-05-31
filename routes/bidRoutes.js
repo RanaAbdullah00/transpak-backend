@@ -19,7 +19,7 @@ const {
   ACTIVE_BID_STATUSES_SQL,
   assertCounterLimit
 } = require("../utils/bidStateMachine");
-const { notifyUser } = require("../utils/notifyEvent");
+const { emitBidStateChange, emitBidRefresh, BID_DISPATCH } = require("../utils/bidRealtime");
 const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
@@ -194,15 +194,16 @@ router.post(
 
     const { rows: loadOwner } = await query(`SELECT shipper_id FROM loads WHERE id = $1`, [loadId]);
     if (loadOwner[0]?.shipper_id) {
-      await notifyUser({
+      await emitBidStateChange({
         receiverId: loadOwner[0].shipper_id,
         senderId: req.auth.userId,
         roleType: "shipper",
+        dispatchType: BID_DISPATCH.CREATED,
         title: "SHIPPER_CONFIRMATION_REQUEST",
-        type: "BID_RECEIVED",
         message: `Carrier bid PKR ${Number(amount)} — confirm to book`
       });
     }
+    emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.CREATED, { bidId: rows[0].id, loadId });
 
     const bid = { ...rows[0], flowStatus: apiBidStatus(rows[0].status) };
     return sendSuccess(res, 201, bid, "Created");
@@ -239,15 +240,16 @@ router.put(
       await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
       const { rows: bidMeta } = await query(`SELECT carrier_id FROM bids WHERE id = $1`, [bidId]);
       if (bidMeta[0]?.carrier_id) {
-        await notifyUser({
+        await emitBidStateChange({
           receiverId: bidMeta[0].carrier_id,
           senderId: req.auth.userId,
           roleType: "carrier",
+          dispatchType: BID_DISPATCH.REJECTED,
           title: "BID_REJECTED",
-          type: "BID_REJECTED",
           message: "Your bid was declined by the shipper"
         });
       }
+      emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.REJECTED, { bidId });
       void writeAudit({
         actorUserId: req.auth.userId,
         action: "bid.rejected",
@@ -317,14 +319,15 @@ router.put(
          WHERE id = $1`,
         [bidId, amount]
       );
-      await notifyUser({
+      await emitBidStateChange({
         receiverId: bid.carrier_id,
         senderId: req.auth.userId,
         roleType: "carrier",
+        dispatchType: BID_DISPATCH.COUNTER,
         title: "COUNTER_OFFERED",
-        type: "COUNTER_OFFERED",
         message: `Shipper counter offer: PKR ${amount}`
       });
+      emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.COUNTER, { bidId });
       void writeAudit({
         actorUserId: req.auth.userId,
         action: "bid.countered",
@@ -410,14 +413,15 @@ router.put(
          WHERE id = $1`,
         [bidId, amount]
       );
-      await notifyUser({
+      await emitBidStateChange({
         receiverId: bid.shipper_id,
         senderId: req.auth.userId,
         roleType: "shipper",
+        dispatchType: BID_DISPATCH.COUNTER,
         title: "COUNTER_OFFERED",
-        type: "COUNTER_OFFERED",
         message: `Carrier counter offer: PKR ${amount}`
       });
+      emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.COUNTER, { bidId });
       void writeAudit({
         actorUserId: req.auth.userId,
         action: "bid.countered",
@@ -466,15 +470,16 @@ router.put(
       [bidId]
     );
     if (meta[0]?.shipper_id) {
-      await notifyUser({
+      await emitBidStateChange({
         receiverId: meta[0].shipper_id,
         senderId: req.auth.userId,
         roleType: "shipper",
+        dispatchType: BID_DISPATCH.UPDATED,
         title: "SHIPPER_CONFIRMATION_REQUEST",
-        type: "BID_RECEIVED",
         message: `Carrier accepted your counter — PKR ${Number(meta[0].amount || 0)}`
       });
     }
+    emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.UPDATED, { bidId });
     return sendSuccess(res, 200, { ok: true, flowStatus: "PENDING_SHIPPER_CONFIRMATION" }, "Accepted");
   }
 );
@@ -495,6 +500,22 @@ router.put(
       [bidId, req.auth.userId]
     );
     if (!rows[0]) return sendError(res, 404, "Not found");
+    const { rows: meta } = await query(
+      `SELECT b.carrier_id, l.shipper_id
+       FROM bids b JOIN loads l ON l.id = b.load_id WHERE b.id = $1`,
+      [bidId]
+    );
+    if (meta[0]?.shipper_id) {
+      await emitBidStateChange({
+        receiverId: meta[0].shipper_id,
+        senderId: req.auth.userId,
+        roleType: "shipper",
+        dispatchType: BID_DISPATCH.UPDATED,
+        title: "BID_UPDATED",
+        message: "Carrier declined your counter offer"
+      });
+    }
+    emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.UPDATED, { bidId });
     return sendSuccess(res, 200, { ok: true, flowStatus: "PENDING_SHIPPER_CONFIRMATION" }, "Rejected");
   }
 );
@@ -672,22 +693,23 @@ router.put(
         metadata: { bidId, bookingId }
       });
 
-      await notifyUser({
+      await emitBidStateChange({
         receiverId: bid.carrier_id,
         senderId: bid.shipper_id,
         roleType: "carrier",
+        dispatchType: BID_DISPATCH.ACCEPTED,
         title: "BID_ACCEPTED",
-        type: "BID_ACCEPTED",
         message: "Your bid was accepted. Contract is active."
       });
-      await notifyUser({
+      await emitBidStateChange({
         receiverId: bid.shipper_id,
         senderId: bid.carrier_id,
         roleType: "shipper",
+        dispatchType: BID_DISPATCH.ACCEPTED,
         title: "CONTRACT_STARTED",
-        type: "BID_ACCEPTED",
         message: "Load booked. You can now contact the carrier."
       });
+      emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.ACCEPTED, { bidId, loadId: bid.load_id });
 
       return sendSuccess(res, 200, { ok: true, bookingId, flowStatus: "ACCEPTED", loadFlowStatus: "ACTIVE" }, "Accepted");
     } catch (err) {

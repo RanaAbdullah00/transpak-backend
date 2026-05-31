@@ -1,4 +1,5 @@
 const { query } = require("../../db/pool");
+const { distanceBetweenCities } = require("../../utils/geoDistance");
 
 const { ACTIVE_BID_STATUSES_SQL } = require("../../utils/bidStateMachine");
 
@@ -9,6 +10,13 @@ const { OPEN_BIDDING_ELIGIBLE_SQL } = require("../../utils/loadExpiry");
 const { buildCarrierMatchSql, ROUTE_PICKUP_ELIGIBLE_SQL } = require("../../utils/matchingEngine");
 
 
+
+function resolveDistanceKm(r) {
+  const stored = r.distance_km != null ? Number(r.distance_km) : null;
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  const geo = distanceBetweenCities(r.origin ?? "", r.destination ?? "");
+  return geo != null && geo > 0 ? geo : null;
+}
 
 function toLoadDto(r) {
 
@@ -34,7 +42,7 @@ function toLoadDto(r) {
 
     suggestedFare: r.suggested_fare != null ? Number(r.suggested_fare) : null,
 
-    distanceKm: r.distance_km != null ? Number(r.distance_km) : null,
+    distanceKm: resolveDistanceKm(r),
 
     pickupDate: r.pickup_date ?? r.pickupDate,
 

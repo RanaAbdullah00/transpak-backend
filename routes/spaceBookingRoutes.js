@@ -71,7 +71,7 @@ router.post(
     await notifyUser({
       receiverId: listing.carrier_id,
       senderId: req.auth.userId,
-      roleType: "shipper",
+      roleType: "carrier",
       title: "SPACE_REQUEST",
       type: "SPACE_REQUEST",
       message: `Capacity request: ${listing.origin} → ${listing.destination} (${requestedKg} kg)`
@@ -189,7 +189,7 @@ async function transitionRequest(req, res, nextStatus) {
     await notifyUser({
       receiverId: row.shipper_id,
       senderId: row.carrier_id,
-      roleType: "carrier",
+      roleType: "shipper",
       title,
       type: title,
       message: `${msgBase}: ${row.origin} → ${row.destination}`
@@ -237,10 +237,11 @@ async function partyTransition(req, res, nextStatus) {
     nextStatus
   ]);
   const otherId = isShipper ? row.carrier_id : row.shipper_id;
+  const receiverRole = isShipper ? "carrier" : "shipper";
   await notifyUser({
     receiverId: otherId,
     senderId: uid,
-    roleType: isShipper ? "shipper" : "carrier",
+    roleType: receiverRole,
     title: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
     type: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
     message: `Status: ${nextStatus} — ${row.origin} → ${row.destination}`
