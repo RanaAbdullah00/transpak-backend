@@ -127,6 +127,34 @@ async function getShipmentHistory(shipmentId) {
 }
 
 router.get(
+  "/active",
+  protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
+  async (req, res) => {
+    try {
+      const uid = req.auth.userId;
+      const { rows } = await query(
+        `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
+                l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
+                l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
+                s.status AS "shipmentStatus", s.updated_at AS "updatedAt"
+         FROM shipments s
+         JOIN loads l ON l.id = s.load_id
+         WHERE s.status NOT IN ('delivered', 'closed')
+           AND l.status = 'booked'
+           AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
+         ORDER BY s.updated_at DESC
+         LIMIT 50`,
+        [uid]
+      );
+      return sendSuccess(res, 200, rows);
+    } catch (err) {
+      return sendError(res, 500, err.message || "Server error");
+    }
+  }
+);
+
+router.get(
   "/completed",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
@@ -244,6 +272,14 @@ router.put(
       const nextLoadStatus = canonical === "booked" ? "booked" : canonical === "closed" ? "closed" : load.status;
       if (nextLoadStatus && nextLoadStatus !== load.status) {
         await query(`UPDATE loads SET status = $2, updated_at = now() WHERE id = $1`, [load.id, nextLoadStatus]);
+      }
+      if (canonical === "delivered" || canonical === "closed") {
+        await query(
+          `UPDATE carrier_space_requests
+           SET status = 'completed', updated_at = now()
+           WHERE load_id = $1 AND status NOT IN ('completed', 'rejected')`,
+          [load.id]
+        );
       }
 
       const statusNotifyMap = {

@@ -8,7 +8,7 @@ const loadController = require("../src/controllers/loadController");
 const { estimateDistanceKm, calculateSuggestedFare, calculateFareBreakdown } = require("../utils/loadFare");
 const { notifyUser, notifyLoadPostedToCarriers, notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey } = require("../utils/realtimeDispatch");
-const { apiLoadStatus } = require("../utils/bidStateMachine");
+const { apiLoadStatus, COMMERCIAL_LOAD_VISIBLE_SQL } = require("../utils/bidStateMachine");
 const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { persistLoadRouteSnapshot } = require("../utils/loadRouteSnapshot");
@@ -83,7 +83,7 @@ router.get("/mine", protect, requireRole("shipper"), async (req, res) => {
               l.created_at AS "createdAt", l.updated_at AS "updatedAt",
               (SELECT COUNT(*)::int FROM bids b WHERE b.load_id = l.id AND b.status IN ('pending_shipper_confirmation','counter_offered','pending','suggested')) AS "bidCount"
        FROM loads l
-       WHERE l.shipper_id = $1
+       WHERE l.shipper_id = $1 AND ${COMMERCIAL_LOAD_VISIBLE_SQL}
        ORDER BY l.created_at DESC
        LIMIT 200`,
       [req.auth.userId]

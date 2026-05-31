@@ -5,7 +5,8 @@ const COMMERCIAL_ROLES = ["shipper", "carrier", "admin"];
 const { validationResult } = require("express-validator");
 const { sendError, sendSuccess } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
-const { notifyUser } = require("../utils/notifyEvent");
+const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
 
 const router = express.Router();
 
@@ -218,6 +219,13 @@ router.post(
       roleType: "platform",
       title: "REVIEW_RECEIVED",
       message: `You received a ${score}-star review`
+    });
+    void notifyAdmins({
+      senderId: req.auth.userId,
+      title: "REVIEW_RECEIVED",
+      type: "REVIEW_RECEIVED",
+      message: `[Platform] ${score}-star rating submitted`,
+      idempotencyKey: buildDedupeKey(["ADMIN", "REVIEW_RECEIVED", rows[0].id])
     });
 
     return sendSuccess(res, 201, rows[0], "Submitted");

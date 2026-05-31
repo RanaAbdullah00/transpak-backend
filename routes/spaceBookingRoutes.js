@@ -6,6 +6,7 @@ const { query, getPool } = require("../db/pool");
 const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const { assertSpaceTransition } = require("../utils/spaceRequestState");
+const { createShipmentFromCapacityAccept } = require("../utils/capacityShipmentBridge");
 const { asyncHandler } = require("../utils/asyncHandler");
 const {
   canActOnSpaceRequestAsCarrier,
@@ -94,12 +95,14 @@ router.get("/requests/incoming", protect, requireRole("carrier"), async (req, re
   const { rows } = await query(
     `SELECT r.id, r.listing_id AS "listingId", r.shipper_id AS "shipperId",
             r.requested_kg AS "requestedKg", r.message, r.status, r.created_at AS "createdAt",
-            l.origin, l.destination, l.remaining_space_kg AS "remainingSpaceKg",
+            r.load_id AS "loadId", l.code AS "loadCode",
+            sl.origin, sl.destination, sl.remaining_space_kg AS "remainingSpaceKg",
             COALESCE(u.full_name, u.email, 'Shipper') AS "shipperName"
      FROM carrier_space_requests r
-     JOIN carrier_space_listings l ON l.id = r.listing_id
+     JOIN carrier_space_listings sl ON sl.id = r.listing_id
      JOIN users u ON u.id = r.shipper_id
-     WHERE l.carrier_id = $1 AND r.status NOT IN ('rejected', 'completed')
+     LEFT JOIN loads l ON l.id = r.load_id
+     WHERE sl.carrier_id = $1 AND r.status NOT IN ('rejected', 'completed')
      ORDER BY r.created_at DESC
      LIMIT 100`,
     [req.auth.userId]
@@ -111,11 +114,13 @@ router.get("/requests/sent", protect, requireRole("shipper"), async (req, res) =
   const { rows } = await query(
     `SELECT r.id, r.listing_id AS "listingId", r.requested_kg AS "requestedKg",
             r.message, r.status, r.created_at AS "createdAt",
+            r.load_id AS "loadId", ld.code AS "loadCode",
             l.origin, l.destination, l.carrier_id AS "carrierId",
             COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName"
      FROM carrier_space_requests r
      JOIN carrier_space_listings l ON l.id = r.listing_id
      JOIN users u ON u.id = l.carrier_id
+     LEFT JOIN loads ld ON ld.id = r.load_id
      WHERE r.shipper_id = $1
      ORDER BY r.created_at DESC
      LIMIT 100`,
@@ -131,8 +136,9 @@ async function transitionRequest(req, res, nextStatus) {
   try {
     await client.query("BEGIN");
     const { rows: reqRows } = await client.query(
-      `SELECT r.id, r.listing_id, r.shipper_id, r.requested_kg, r.status,
-              l.carrier_id, l.remaining_space_kg, l.origin, l.destination
+      `SELECT r.id, r.listing_id, r.shipper_id, r.requested_kg, r.status, r.message, r.load_id,
+              l.carrier_id, l.remaining_space_kg, l.origin, l.destination,
+              l.vehicle_type, l.rate_per_kg, l.available_from
        FROM carrier_space_requests r
        JOIN carrier_space_listings l ON l.id = r.listing_id
        WHERE r.id = $1
@@ -171,6 +177,18 @@ async function transitionRequest(req, res, nextStatus) {
       );
     }
 
+    let shipmentBridge = null;
+    if (nextStatus === "accepted" && !row.load_id) {
+      shipmentBridge = await createShipmentFromCapacityAccept(client, row, {
+        carrier_id: row.carrier_id,
+        origin: row.origin,
+        destination: row.destination,
+        vehicle_type: row.vehicle_type,
+        rate_per_kg: row.rate_per_kg,
+        available_from: row.available_from
+      });
+    }
+
     const dbStatus = nextStatus === "accepted" ? "active" : nextStatus;
 
     await client.query(
@@ -195,13 +213,14 @@ async function transitionRequest(req, res, nextStatus) {
       completed: ["SPACE_COMPLETED", "Capacity contract completed — leave a review"]
     };
     const [title, msgBase] = notifyMap[nextStatus] || ["SPACE_UPDATE", "Request updated"];
+    const refSuffix = shipmentBridge?.loadCode ? ` (${shipmentBridge.loadCode})` : '';
     await notifyUser({
       receiverId: row.shipper_id,
       senderId: row.carrier_id,
       roleType: "shipper",
-      title,
-      type: title,
-      message: `${msgBase}: ${row.origin} → ${row.destination}`
+      title: shipmentBridge ? "CONTRACT_STARTED" : title,
+      type: shipmentBridge ? "CONTRACT_STARTED" : title,
+      message: `${msgBase}${refSuffix}: ${row.origin} → ${row.destination}`
     });
 
     void notifyAdmins({
@@ -212,7 +231,12 @@ async function transitionRequest(req, res, nextStatus) {
       idempotencyKey: buildDedupeKey(["ADMIN", title, requestId, nextStatus])
     });
 
-    return sendSuccess(res, 200, { ok: true, status: dbStatus.toUpperCase() });
+    return sendSuccess(res, 200, {
+      ok: true,
+      status: dbStatus.toUpperCase(),
+      loadId: shipmentBridge?.loadId || row.load_id || null,
+      loadCode: shipmentBridge?.loadCode || null
+    });
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -262,6 +286,13 @@ async function partyTransition(req, res, nextStatus) {
     title: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
     type: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
     message: `Status: ${nextStatus} — ${row.origin} → ${row.destination}`
+  });
+  void notifyAdmins({
+    senderId: uid,
+    title: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
+    type: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
+    message: `[Platform] Capacity request ${nextStatus}: ${row.origin} → ${row.destination}`,
+    idempotencyKey: buildDedupeKey(["ADMIN", "SPACE", requestId, nextStatus])
   });
   return sendSuccess(res, 200, { ok: true, status: nextStatus.toUpperCase() });
 }

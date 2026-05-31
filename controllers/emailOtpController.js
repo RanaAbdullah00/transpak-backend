@@ -11,6 +11,8 @@ const { sendOtpEmail, sendMail, smtpConfigured, validateOutboundMailConfig, clas
 const { isDevAuthRelaxEnabled, isAllowlistedDevTestEmail } = require("../utils/devAuthMode");
 const devAuthTestState = require("../services/devAuthTestState");
 const { buildOtpDeliveryData, errorCodeForFailure, statusForErrorCode } = require("../utils/otpDelivery");
+const { notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
 
 const { PURPOSES } = emailOtpRepo;
 
@@ -343,6 +345,14 @@ async function verifyRegisterOtp(req, res) {
     await pendingRegistrationRepo.deleteByEmail(email);
     await emailOtpRepo.invalidateOpen(email, PURPOSES.REGISTER);
 
+    void notifyAdmins({
+      senderId: user.id,
+      title: "USER_REGISTERED",
+      type: "USER_REGISTERED",
+      message: `[Platform] New ${pending.role} registered: ${pending.full_name || pending.email}`,
+      idempotencyKey: buildDedupeKey(["ADMIN", "USER_REGISTERED", user.id])
+    });
+
     const token = signToken(user);
     return sendSuccess(res, 200, authData(user, token), "Email verified");
   }
@@ -383,6 +393,14 @@ async function verifyRegisterOtp(req, res) {
   await emailOtpRepo.consume(row.id);
   const user = await userRepo.setVerifiedByEmail(email, true);
   if (!user) return sendError(res, 404, "Account not found", null, "SERVER_ERROR");
+
+  void notifyAdmins({
+    senderId: user.id,
+    title: "USER_REGISTERED",
+    type: "USER_REGISTERED",
+    message: `[Platform] New ${user.activeRole || user.roles?.[0] || "user"} registered: ${user.fullName || user.full_name || email}`,
+    idempotencyKey: buildDedupeKey(["ADMIN", "USER_REGISTERED", user.id])
+  });
 
   const token = signToken(user);
   return sendSuccess(res, 200, authData(user, token), "Email verified");

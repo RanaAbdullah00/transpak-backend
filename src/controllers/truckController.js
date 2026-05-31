@@ -278,6 +278,13 @@ async function update(req, res) {
           title: "TRUCK_UPDATED",
           message: "Truck details changed — pending admin re-approval"
         });
+        void notifyAdmins({
+          senderId: req.auth.userId,
+          title: "TRUCK_PENDING",
+          type: "TRUCK_PENDING",
+          message: `[Platform] Truck re-submitted for verification (${updated.engineNumber || id})`,
+          idempotencyKey: buildDedupeKey(["ADMIN", "TRUCK_PENDING", id])
+        });
       }
     }
     return sendSuccess(res, 200, enrichTruck(updated));

@@ -278,13 +278,22 @@ async function updateProfile(req, res) {
 
     const cnicDocsComplete = Boolean(finalUser.cnicImage && finalUser.cnicImageBack);
     const cnicWasIncomplete = !Boolean(user.cnicImage && user.cnicImageBack);
-    if (cnicDocsComplete && cnicWasIncomplete && !finalUser.verified) {
+    const cnicImagesChanged =
+      (cnicImageFile && user.cnicImage !== next.cnic_image) ||
+      (cnicImageBackFile && user.cnicImageBack !== next.cnic_image_back);
+    if (cnicDocsComplete && !finalUser.verified && (cnicWasIncomplete || cnicImagesChanged)) {
       void notifyAdmins({
         senderId: req.auth.userId,
         title: "VERIFICATION_PENDING",
         type: "VERIFICATION_PENDING",
         message: `[Platform] CNIC verification pending for ${finalUser.email || finalUser.fullName || req.auth.userId}`,
-        idempotencyKey: buildDedupeKey(["ADMIN", "VERIFICATION_PENDING", req.auth.userId])
+        idempotencyKey: buildDedupeKey([
+          "ADMIN",
+          "VERIFICATION_PENDING",
+          req.auth.userId,
+          next.cnic_image || "",
+          next.cnic_image_back || ""
+        ])
       });
     }
 
