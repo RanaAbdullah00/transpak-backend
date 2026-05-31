@@ -8,6 +8,8 @@ const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const { assertSpaceTransition } = require("../utils/spaceRequestState");
 const { createShipmentFromCapacityAccept } = require("../utils/capacityShipmentBridge");
 const { asyncHandler } = require("../utils/asyncHandler");
+const { writeAudit } = require("../utils/auditLog");
+const { emitEntityDispatch, newEventId } = require("../utils/realtimeDispatch");
 const {
   canActOnSpaceRequestAsCarrier,
   canActOnSpaceRequestAsParty,
@@ -76,7 +78,18 @@ router.post(
       roleType: "carrier",
       title: "SPACE_REQUEST",
       type: "SPACE_REQUEST",
-      message: `Capacity request: ${listing.origin} → ${listing.destination} (${requestedKg} kg)`
+      message: `Capacity request: ${listing.origin} → ${listing.destination} (${requestedKg} kg)`,
+      idempotencyKey: buildDedupeKey(["SPACE_REQUEST", rows[0].id, listing.carrier_id])
+    });
+
+    await notifyUser({
+      receiverId: req.auth.userId,
+      senderId: req.auth.userId,
+      roleType: "shipper",
+      title: "SPACE_REQUEST_SENT",
+      type: "SPACE_REQUEST_SENT",
+      message: `Request sent: ${listing.origin} → ${listing.destination} (${requestedKg} kg)`,
+      idempotencyKey: buildDedupeKey(["SPACE_REQUEST_SENT", rows[0].id])
     });
 
     void notifyAdmins({
@@ -85,6 +98,22 @@ router.post(
       type: "SPACE_REQUEST",
       message: `[Platform] Capacity request ${requestedKg} kg: ${listing.origin} → ${listing.destination}`,
       idempotencyKey: buildDedupeKey(["ADMIN", "SPACE_REQUEST", rows[0].id])
+    });
+
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "space.request_sent",
+      targetEntity: "space_request",
+      targetId: rows[0].id,
+      metadata: { listingId, requestedKg, origin: listing.origin, destination: listing.destination }
+    });
+
+    emitEntityDispatch({
+      entityType: "space",
+      entityId: rows[0].id,
+      type: "SPACE_REQUEST",
+      eventId: newEventId(),
+      payload: { requestId: rows[0].id, listingId, status: "request_sent" }
     });
 
     return sendSuccess(res, 201, rows[0], "Request sent");
@@ -231,6 +260,41 @@ async function transitionRequest(req, res, nextStatus) {
       idempotencyKey: buildDedupeKey(["ADMIN", title, requestId, nextStatus])
     });
 
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: `space.${nextStatus}`,
+      targetEntity: "space_request",
+      targetId: requestId,
+      metadata: {
+        listingId: row.listing_id,
+        shipperId: row.shipper_id,
+        loadId: shipmentBridge?.loadId || row.load_id || null
+      }
+    });
+
+    emitEntityDispatch({
+      entityType: "space",
+      entityId: requestId,
+      type: title,
+      eventId: newEventId(),
+      payload: { requestId, status: dbStatus, loadId: shipmentBridge?.loadId || row.load_id || null }
+    });
+
+    if (shipmentBridge?.shipmentId) {
+      emitEntityDispatch({
+        entityType: "shipment",
+        entityId: shipmentBridge.shipmentId,
+        type: "CONTRACT_STARTED",
+        eventId: newEventId(),
+        payload: {
+          requestId,
+          loadId: shipmentBridge.loadId,
+          loadCode: shipmentBridge.loadCode,
+          shipmentId: shipmentBridge.shipmentId
+        }
+      });
+    }
+
     return sendSuccess(res, 200, {
       ok: true,
       status: dbStatus.toUpperCase(),
@@ -293,6 +357,20 @@ async function partyTransition(req, res, nextStatus) {
     type: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
     message: `[Platform] Capacity request ${nextStatus}: ${row.origin} → ${row.destination}`,
     idempotencyKey: buildDedupeKey(["ADMIN", "SPACE", requestId, nextStatus])
+  });
+  void writeAudit({
+    actorUserId: uid,
+    action: `space.${nextStatus}`,
+    targetEntity: "space_request",
+    targetId: requestId,
+    metadata: { origin: row.origin, destination: row.destination }
+  });
+  emitEntityDispatch({
+    entityType: "space",
+    entityId: requestId,
+    type: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",
+    eventId: newEventId(),
+    payload: { requestId, status: nextStatus }
   });
   return sendSuccess(res, 200, { ok: true, status: nextStatus.toUpperCase() });
 }

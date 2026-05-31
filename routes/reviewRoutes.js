@@ -7,6 +7,7 @@ const { sendError, sendSuccess } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey } = require("../utils/realtimeDispatch");
+const { writeAudit } = require("../utils/auditLog");
 
 const router = express.Router();
 
@@ -213,12 +214,22 @@ router.post(
       }
     }
 
+    const { rows: targetUserRows } = await query(`SELECT roles FROM users WHERE id = $1`, [toUserId]);
+    const targetRoles = Array.isArray(targetUserRows[0]?.roles) ? targetUserRows[0].roles : [];
+    const receiverRole = targetRoles.includes("carrier")
+      ? "carrier"
+      : targetRoles.includes("shipper")
+        ? "shipper"
+        : "shipper";
+
     await notifyUser({
       receiverId: toUserId,
       senderId: req.auth.userId,
-      roleType: "platform",
+      roleType: receiverRole,
       title: "REVIEW_RECEIVED",
-      message: `You received a ${score}-star review`
+      type: "REVIEW_RECEIVED",
+      message: `You received a ${score}-star review`,
+      idempotencyKey: buildDedupeKey(["REVIEW_RECEIVED", rows[0].id, toUserId])
     });
     void notifyAdmins({
       senderId: req.auth.userId,
@@ -226,6 +237,14 @@ router.post(
       type: "REVIEW_RECEIVED",
       message: `[Platform] ${score}-star rating submitted`,
       idempotencyKey: buildDedupeKey(["ADMIN", "REVIEW_RECEIVED", rows[0].id])
+    });
+
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "rating.submitted",
+      targetEntity: loadId ? "load" : "space_request",
+      targetId: loadId || spaceRequestId,
+      metadata: { ratingId: rows[0].id, toUserId, score }
     });
 
     return sendSuccess(res, 201, rows[0], "Submitted");

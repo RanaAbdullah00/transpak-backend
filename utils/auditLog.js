@@ -14,6 +14,17 @@ async function writeAudit(entry) {
   if (!action || !targetEntity) return;
 
   try {
+    if (targetId) {
+      const { rows: dup } = await query(
+        `SELECT 1 FROM audit_events
+         WHERE action = $1 AND target_entity = $2 AND target_id = $3
+           AND actor_user_id IS NOT DISTINCT FROM $4::uuid
+           AND created_at > now() - interval '60 seconds'
+         LIMIT 1`,
+        [action, targetEntity, targetId, actorUserId || null]
+      );
+      if (dup[0]) return;
+    }
     await query(
       `INSERT INTO audit_events (actor_user_id, action, target_entity, target_id, metadata)
        VALUES ($1, $2, $3, $4, $5::jsonb)`,

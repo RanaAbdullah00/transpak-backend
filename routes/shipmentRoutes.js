@@ -11,7 +11,7 @@ const {
 const { query } = require("../db/pool");
 const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey } = require("../utils/realtimeDispatch");
-const { emitToTracking } = require("../services/realtimeHub");
+const { emitToTracking, emitToShipment } = require("../services/realtimeHub");
 const {
   buildRouteCoordinates,
   trackRoomKey,
@@ -335,19 +335,19 @@ router.put(
       });
       const room = trackRoomKey(load);
       if (room && core) emitToTracking(room, "tracking:update", core);
-      if (canonical === "booked") {
+      if (shipment?.id && core) emitToShipment(shipment.id, "tracking:update", core);
+      const auditActionMap = {
+        pickedup: "shipment.picked_up",
+        intransit: "shipment.in_transit",
+        booked: "shipment.started",
+        delivered: "shipment.completed",
+        closed: "shipment.completed"
+      };
+      const auditAction = auditActionMap[canonical];
+      if (auditAction) {
         void writeAudit({
           actorUserId: req.auth.userId,
-          action: "shipment.started",
-          targetEntity: "shipment",
-          targetId: shipment.id,
-          metadata: { loadId: load.id, status: canonical }
-        });
-      }
-      if (canonical === "delivered" || canonical === "closed") {
-        void writeAudit({
-          actorUserId: req.auth.userId,
-          action: "shipment.completed",
+          action: auditAction,
           targetEntity: "shipment",
           targetId: shipment.id,
           metadata: { loadId: load.id, status: canonical }

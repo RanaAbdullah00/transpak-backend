@@ -22,7 +22,7 @@ const {
 } = require("../utils/bidStateMachine");
 const { emitBidStateChange, emitBidRefresh, BID_DISPATCH } = require("../utils/bidRealtime");
 const { notifyAdmins } = require("../utils/notifyEvent");
-const { buildDedupeKey } = require("../utils/realtimeDispatch");
+const { buildDedupeKey, emitEntityDispatch, newEventId } = require("../utils/realtimeDispatch");
 const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
@@ -210,6 +210,21 @@ router.post(
       });
     }
     emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.CREATED, { bidId: rows[0].id, loadId });
+    emitEntityDispatch({
+      entityType: "bid",
+      entityId: rows[0].id,
+      type: BID_DISPATCH.CREATED,
+      eventId: newEventId(),
+      payload: { bidId: rows[0].id, loadId }
+    });
+
+    void writeAudit({
+      actorUserId: req.auth.userId,
+      action: "bid.created",
+      targetEntity: "bid",
+      targetId: rows[0].id,
+      metadata: { loadId, amount: Number(amount) }
+    });
 
     void notifyAdmins({
       senderId: req.auth.userId,

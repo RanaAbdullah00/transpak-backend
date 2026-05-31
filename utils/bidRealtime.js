@@ -1,5 +1,5 @@
 const { notifyUser } = require("./notifyEvent");
-const { emitDispatchEvent, newEventId } = require("./realtimeDispatch");
+const { emitDispatchEvent, emitEntityDispatch, newEventId } = require("./realtimeDispatch");
 
 const BID_DISPATCH = {
   CREATED: "BID_CREATED",
@@ -37,8 +37,19 @@ function emitBidRefresh(userId, roleType, dispatchType = BID_DISPATCH.UPDATED, p
     type: dispatchType,
     receiverId: userId,
     roleType,
+    entityType: payload?.bidId ? "bid" : null,
+    entityId: payload?.bidId || null,
     payload
   });
+  if (payload?.bidId) {
+    emitEntityDispatch({
+      entityType: "bid",
+      entityId: payload.bidId,
+      type: dispatchType,
+      eventId: newEventId(),
+      payload
+    });
+  }
 }
 
 module.exports = {

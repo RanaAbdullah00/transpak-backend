@@ -1,3 +1,5 @@
+const { entityRoom } = require("../utils/entityRooms");
+
 /** Socket.io instance injected at server bootstrap (avoids circular requires). */
 let io = null;
 
@@ -94,11 +96,36 @@ function isEngineReady() {
 
 function emitToTracking(refKey, event, payload) {
   if (!io || !refKey) return;
+  const key = String(refKey);
   try {
-    io.to(`track:${String(refKey)}`).emit(event, payload);
+    io.to(`track:${key}`).emit(event, payload);
   } catch {
     // ignore
   }
+}
+
+/** Entity-scoped room (shipment|space|bid|track) — same room for all parties. */
+function emitToEntityRoom(kind, entityId, event, payload) {
+  const room = entityRoom(kind, entityId);
+  if (!io || !room) return false;
+  try {
+    io.to(room).emit(event, payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function emitToShipment(shipmentId, event, payload) {
+  return emitToEntityRoom("shipment", shipmentId, event, payload);
+}
+
+function emitToSpace(requestId, event, payload) {
+  return emitToEntityRoom("space", requestId, event, payload);
+}
+
+function emitToBid(bidId, event, payload) {
+  return emitToEntityRoom("bid", bidId, event, payload);
 }
 
 module.exports = {
@@ -111,5 +138,9 @@ module.exports = {
   emitToUserRole,
   emitToUserCommercialRoles,
   emitToConversation,
-  emitToTracking
+  emitToTracking,
+  emitToEntityRoom,
+  emitToShipment,
+  emitToSpace,
+  emitToBid
 };

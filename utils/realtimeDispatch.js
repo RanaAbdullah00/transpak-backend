@@ -2,7 +2,13 @@
  * Phase 6 — logistics dispatch event types (socket + notifications).
  */
 const crypto = require("crypto");
-const { emitToUserRole } = require("../services/realtimeHub");
+const {
+  emitToUserRole,
+  emitToEntityRoom,
+  emitToShipment,
+  emitToSpace,
+  emitToBid
+} = require("../services/realtimeHub");
 const { recordDispatchFailure } = require("./opsTelemetry");
 
 const DISPATCH_TYPES = {
@@ -22,6 +28,12 @@ const DISPATCH_TYPES = {
   NOTIFICATION: "NOTIFICATION"
 };
 
+const ENTITY_EMITTERS = {
+  shipment: emitToShipment,
+  space: emitToSpace,
+  bid: emitToBid
+};
+
 function buildDedupeKey(parts) {
   return parts
     .filter((p) => p != null && String(p).length)
@@ -35,37 +47,80 @@ function newEventId() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-/**
- * @param {object} envelope
- * @param {string} envelope.eventId
- * @param {string} envelope.type
- * @param {string} envelope.receiverId
- * @param {string|null} envelope.roleType
- * @param {object} [envelope.payload]
- * @param {object} [envelope.notification]
- */
-function emitDispatchEvent(envelope) {
+function buildDispatchRow(envelope) {
+  const receiverId = envelope?.receiverId;
+  const roleType = envelope?.roleType;
+  return {
+    eventId: envelope.eventId || newEventId(),
+    type: String(envelope.type || DISPATCH_TYPES.NOTIFICATION),
+    at: envelope.at || new Date().toISOString(),
+    roleType: roleType != null ? String(roleType).toLowerCase() : null,
+    scope: receiverId
+      ? {
+          userId: String(receiverId),
+          workspace: String(roleType || "").toLowerCase()
+        }
+      : null,
+    entityType: envelope.entityType || null,
+    entityId: envelope.entityId != null ? String(envelope.entityId) : null,
+    payload: envelope.payload || null,
+    notification: envelope.notification || null
+  };
+}
+
+function emitEntityFanout(row) {
+  const kind = String(row.entityType || "").toLowerCase();
+  const id = row.entityId;
+  if (!kind || !id) return;
+  const fn = ENTITY_EMITTERS[kind] || null;
+  if (fn) {
+    fn(id, "dispatch:event", row);
+    return;
+  }
+  emitToEntityRoom(kind, id, "dispatch:event", row);
+}
+
+function emitDispatchEvent(envelope, attempt = 0) {
   const receiverId = envelope?.receiverId;
   const roleType = envelope?.roleType;
   if (!receiverId || !roleType) return;
 
-  const row = {
-    eventId: envelope.eventId || newEventId(),
-    type: String(envelope.type || DISPATCH_TYPES.NOTIFICATION),
-    at: envelope.at || new Date().toISOString(),
-    roleType: String(roleType).toLowerCase(),
-    scope: {
-      userId: String(receiverId),
-      workspace: String(roleType).toLowerCase()
-    },
-    payload: envelope.payload || null,
-    notification: envelope.notification || null
-  };
+  const row = buildDispatchRow(envelope);
 
   try {
     emitToUserRole(receiverId, roleType, "dispatch:event", row);
+    emitEntityFanout(row);
   } catch (err) {
     recordDispatchFailure(err?.message || "emit_failed");
+    if (attempt === 0) {
+      setTimeout(() => emitDispatchEvent(envelope, 1), 300);
+    }
+  }
+}
+
+/** Entity-room dispatch without user workspace (subscribers on shipment/space/bid rooms). */
+function emitEntityDispatch({ entityType, entityId, type, eventId, payload, at }) {
+  if (!entityType || !entityId) return;
+  const row = {
+    eventId: eventId || newEventId(),
+    type: String(type || DISPATCH_TYPES.NOTIFICATION),
+    at: at || new Date().toISOString(),
+    entityType: String(entityType).toLowerCase(),
+    entityId: String(entityId),
+    payload: payload || null,
+    notification: null
+  };
+  try {
+    emitEntityFanout(row);
+  } catch (err) {
+    recordDispatchFailure(err?.message || "entity_emit_failed");
+    setTimeout(() => {
+      try {
+        emitEntityFanout(row);
+      } catch {
+        /* non-blocking retry */
+      }
+    }, 300);
   }
 }
 
@@ -73,5 +128,6 @@ module.exports = {
   DISPATCH_TYPES,
   buildDedupeKey,
   newEventId,
-  emitDispatchEvent
+  emitDispatchEvent,
+  emitEntityDispatch
 };
