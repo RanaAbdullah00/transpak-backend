@@ -3,7 +3,8 @@ const { body, param, validationResult } = require("express-validator");
 const { protect, requireAnyRole, requireRole } = require("../middleware/authMiddleware");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query, getPool } = require("../db/pool");
-const { notifyUser } = require("../utils/notifyEvent");
+const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const { assertSpaceTransition } = require("../utils/spaceRequestState");
 const { asyncHandler } = require("../utils/asyncHandler");
 const {
@@ -75,6 +76,14 @@ router.post(
       title: "SPACE_REQUEST",
       type: "SPACE_REQUEST",
       message: `Capacity request: ${listing.origin} → ${listing.destination} (${requestedKg} kg)`
+    });
+
+    void notifyAdmins({
+      senderId: req.auth.userId,
+      title: "SPACE_REQUEST",
+      type: "SPACE_REQUEST",
+      message: `[Platform] Capacity request ${requestedKg} kg: ${listing.origin} → ${listing.destination}`,
+      idempotencyKey: buildDedupeKey(["ADMIN", "SPACE_REQUEST", rows[0].id])
     });
 
     return sendSuccess(res, 201, rows[0], "Request sent");
@@ -193,6 +202,14 @@ async function transitionRequest(req, res, nextStatus) {
       title,
       type: title,
       message: `${msgBase}: ${row.origin} → ${row.destination}`
+    });
+
+    void notifyAdmins({
+      senderId: req.auth.userId,
+      title,
+      type: title,
+      message: `[Platform] Capacity request ${requestId} → ${nextStatus}: ${row.origin} → ${row.destination}`,
+      idempotencyKey: buildDedupeKey(["ADMIN", title, requestId, nextStatus])
     });
 
     return sendSuccess(res, 200, { ok: true, status: dbStatus.toUpperCase() });

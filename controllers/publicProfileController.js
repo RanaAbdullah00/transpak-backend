@@ -76,7 +76,7 @@ async function getPublicProfile(req, res) {
 
   const { rows: userRows } = await query(
     `SELECT id, full_name AS "fullName", phone, profile_image AS "profileImage",
-            roles, is_profile_complete AS "profileComplete",
+            roles, is_profile_complete AS "profileComplete", verified,
             created_at AS "joinedAt"
      FROM users WHERE id = $1`,
     [targetId]
@@ -145,7 +145,7 @@ async function getPublicProfile(req, res) {
     phone: showPhone ? user.phone : null,
     phoneLocked: !showPhone,
     profileComplete: Boolean(user.profileComplete),
-    verified: Boolean(user.profileComplete),
+    verified: Boolean(user.verified),
     joinedAt: user.joinedAt,
     ratingAverage: Number(ratingRows[0]?.avg || 0),
     ratingCount: Number(ratingRows[0]?.count || 0),

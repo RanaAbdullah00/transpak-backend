@@ -9,7 +9,8 @@ const {
   handleValidationErrors
 } = require("../middleware/validateShipmentBody");
 const { query } = require("../db/pool");
-const { notifyUser } = require("../utils/notifyEvent");
+const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const { emitToTracking } = require("../services/realtimeHub");
 const {
   buildRouteCoordinates,
@@ -280,6 +281,13 @@ router.put(
             message: msg
           });
         }
+        void notifyAdmins({
+          senderId: req.auth.userId,
+          title: notifyMeta.type,
+          type: notifyMeta.type,
+          message: `[Platform] ${msg}`,
+          idempotencyKey: buildDedupeKey(["ADMIN", notifyMeta.type, load.id, canonical])
+        });
       }
 
       const history = await getShipmentHistory(shipment.id);

@@ -28,6 +28,9 @@ const MAX_COUNTER_ROUNDS = Number(process.env.BID_MAX_COUNTER_ROUNDS || 5);
 const ACTIVE_BID_STATUSES_SQL =
   "('pending_shipper_confirmation','counter_offered','pending','suggested')";
 
+/** Commercial APIs hide expired/cancelled bids; admin retains full history */
+const COMMERCIAL_BID_VISIBLE_SQL = "b.status <> 'cancelled'";
+
 const ALLOWED_BID_TRANSITIONS = {
   pending_shipper_confirmation: new Set(["counter_offered", "accepted", "rejected"]),
   counter_offered: new Set(["pending_shipper_confirmation", "accepted", "rejected"]),
@@ -115,6 +118,7 @@ module.exports = {
   BID,
   LOAD,
   ACTIVE_BID_STATUSES_SQL,
+  COMMERCIAL_BID_VISIBLE_SQL,
   MAX_COUNTER_ROUNDS,
   assertBidTransition,
   assertCounterLimit,

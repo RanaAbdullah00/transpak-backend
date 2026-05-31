@@ -16,6 +16,7 @@ const {
 const { asyncHandler } = require("../utils/asyncHandler");
 const { writeAudit } = require("../utils/auditLog");
 const realtimeHub = require("../services/realtimeHub");
+const { notifyUser } = require("../utils/notifyEvent");
 const { adminSessionAudit } = require("../middleware/adminSessionAudit");
 const adminDashboardWidgetRoutes = require("./adminDashboardWidgetRoutes");
 const adminFleetRoutes = require("./adminFleetRoutes");
@@ -446,11 +447,17 @@ router.patch(
   validate,
   async (req, res) => {
   const { verified } = req.body || {};
+  const verifiedBool = Boolean(verified);
   const { rows } = await query(
-    `UPDATE users SET verified = $2, updated_at = now()
+    `UPDATE users SET verified = $2,
+       is_profile_complete = (
+         COALESCE(cnic_image, '') <> '' AND COALESCE(cnic_image_back, '') <> '' AND $2
+       ),
+       updated_at = now()
      WHERE id = $1
-     RETURNING id, COALESCE(full_name, email) AS name, email, cnic_number AS cnic, roles, blocked, verified`,
-    [req.params.id, Boolean(verified)]
+     RETURNING id, COALESCE(full_name, email) AS name, email, cnic_number AS cnic, roles, blocked, verified,
+               cnic_image AS "cnicImage", cnic_image_back AS "cnicImageBack", is_profile_complete AS "profileComplete"`,
+    [req.params.id, verifiedBool]
   );
   if (!rows[0]) return sendError(res, 404, "Not found", null, "NOT_FOUND");
   void writeAudit({
@@ -458,6 +465,19 @@ router.patch(
     action: Boolean(verified) ? "admin.user.verified" : "admin.user.unverified",
     targetEntity: "user",
     targetId: req.params.id
+  });
+  const target = rows[0];
+  const roles = Array.isArray(target.roles) ? target.roles : [];
+  const roleType = roles.includes("carrier") ? "carrier" : roles.includes("shipper") ? "shipper" : "admin";
+  void notifyUser({
+    receiverId: target.id,
+    senderId: req.auth.userId,
+    roleType,
+    title: verified ? "VERIFICATION_APPROVED" : "VERIFICATION_REJECTED",
+    type: verified ? "VERIFICATION_APPROVED" : "VERIFICATION_REJECTED",
+    message: verified
+      ? "Your identity verification has been approved."
+      : "Your verification was not approved. Please contact support."
   });
   return sendSuccess(res, 200, { ok: true, user: rows[0] });
 });

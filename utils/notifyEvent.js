@@ -61,7 +61,6 @@ function queueSocketEmit(receiverId, payload, roleType) {
 }
 
 function flushSocketQueue(receiverId, roleType) {
-  const { emitToUserRole } = require("../services/realtimeHub");
   const role = roleType != null ? String(roleType).trim().toLowerCase() : null;
   const key = `${receiverId}|${role || "any"}`;
   const q = socketQueues.get(key);
@@ -83,12 +82,9 @@ function flushSocketQueue(receiverId, roleType) {
       payload: { title: payload.title, message: payload.message }
     });
   });
-
-  if (items.length === 1) {
-    emitToUserRole(receiverId, rt, "notification:new", items[0]);
-    return;
-  }
-  emitToUserRole(receiverId, rt, "notifications:batch", { items });
+  // dispatch:event is the single socket channel (includes notification payload).
+  // Avoid also emitting notification:new / notifications:batch — clients dedupe poorly
+  // and users can see duplicate toasts + sounds.
 }
 
 async function findByDedupeKey(receiverId, dedupeKey) {
@@ -233,9 +229,12 @@ function flushAllNotificationQueues() {
   }
 }
 
+const { notifyAdmins } = require("./adminNotify");
+
 module.exports = {
   notifyUser,
   notifyLoadPostedToCarriers,
+  notifyAdmins,
   flushAllNotificationQueues,
   dedupeKeyFromContent
 };

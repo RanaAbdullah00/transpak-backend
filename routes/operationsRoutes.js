@@ -55,7 +55,7 @@ router.get(
         query(
           `SELECT COUNT(*) FILTER (WHERE status IN ('pending_shipper_confirmation','counter_offered','pending','suggested'))::int AS active,
                   COUNT(*) FILTER (WHERE status = 'accepted')::int AS won
-           FROM bids WHERE carrier_id = $1`,
+           FROM bids WHERE carrier_id = $1 AND status <> 'cancelled'`,
           [uid]
         ),
         query(

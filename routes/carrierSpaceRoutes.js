@@ -4,7 +4,8 @@ const { protect, requireAnyRole, requireRole } = require("../middleware/authMidd
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query: dbQuery } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
-const { notifyUser } = require("../utils/notifyEvent");
+const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const {
   canMutateCarrierSpaceListing,
   hasAdminRole,
@@ -158,6 +159,14 @@ router.post(
       title: "SPACE_LISTED",
       type: "SPACE_LISTED",
       message: `Capacity listed: ${origin} → ${destination}`
+    });
+
+    void notifyAdmins({
+      senderId: req.auth.userId,
+      title: "SPACE_LISTED",
+      type: "SPACE_LISTED",
+      message: `[Platform] Capacity listed: ${origin} → ${destination}`,
+      idempotencyKey: buildDedupeKey(["ADMIN", "SPACE_LISTED", rows[0].id])
     });
 
     return sendSuccess(res, 201, rows[0], "Created");

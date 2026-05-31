@@ -1,3 +1,5 @@
+const { computeProfileComplete } = require("./profileCompletion");
+
 function roleFlags(roles) {
   const r = Array.isArray(roles) ? roles : [];
   return {
@@ -48,7 +50,7 @@ function serializeAuthUser(user) {
     cnicImage: user.cnicImage || user.cnic_image || "",
     cnicImageBack: user.cnicImageBack || user.cnic_image_back || "",
     profileImage: user.profileImage || user.profile_image || "",
-    profileComplete: Boolean(user.isProfileComplete ?? user.profileComplete)
+    profileComplete: computeProfileComplete(user)
   };
 }
 
@@ -77,7 +79,7 @@ function loginAuthData(user, token) {
       verified: Boolean(user.verified),
       profileImage: user.profileImage || user.profile_image || "",
       fullName: user.fullName || user.full_name || user.name || "",
-      profileComplete: Boolean(user.isProfileComplete ?? user.profileComplete)
+      profileComplete: computeProfileComplete(user)
     },
     roles: roleFlags(roles),
     currentRole: user.activeRole

@@ -17,9 +17,12 @@ const {
   isCounterOffered,
   isAwaitingShipper,
   ACTIVE_BID_STATUSES_SQL,
+  COMMERCIAL_BID_VISIBLE_SQL,
   assertCounterLimit
 } = require("../utils/bidStateMachine");
 const { emitBidStateChange, emitBidRefresh, BID_DISPATCH } = require("../utils/bidRealtime");
+const { notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
@@ -63,6 +66,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(
               'Truck' AS "vehicleType"
        FROM bids b
        WHERE b.carrier_id = $1
+         AND ${COMMERCIAL_BID_VISIBLE_SQL}
        ORDER BY b.created_at DESC
        LIMIT 500`,
       [req.auth.userId]
@@ -84,6 +88,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(
        JOIN users u ON u.id = b.carrier_id
        WHERE l.shipper_id = $1
          AND b.carrier_id <> l.shipper_id
+         AND ${COMMERCIAL_BID_VISIBLE_SQL}
          ${shipperLoadClause}
        ORDER BY b.created_at DESC
        LIMIT 500`,
@@ -106,6 +111,7 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
      FROM bids b
      JOIN loads l ON l.id = b.load_id
      WHERE b.carrier_id = $1 AND l.shipper_id <> b.carrier_id
+       AND ${COMMERCIAL_BID_VISIBLE_SQL}
      ORDER BY b.created_at DESC
      LIMIT 500`,
     [req.auth.userId]
@@ -205,6 +211,14 @@ router.post(
     }
     emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.CREATED, { bidId: rows[0].id, loadId });
 
+    void notifyAdmins({
+      senderId: req.auth.userId,
+      title: "BID_CREATED",
+      type: "BID_CREATED",
+      message: `[Platform] New bid PKR ${Number(amount)} on load ${loadId}`,
+      idempotencyKey: buildDedupeKey(["ADMIN", "BID_CREATED", rows[0].id])
+    });
+
     const bid = { ...rows[0], flowStatus: apiBidStatus(rows[0].status) };
     return sendSuccess(res, 201, bid, "Created");
     } catch (err) {
@@ -250,6 +264,13 @@ router.put(
         });
       }
       emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.REJECTED, { bidId });
+      void notifyAdmins({
+        senderId: req.auth.userId,
+        title: "BID_REJECTED",
+        type: "BID_REJECTED",
+        message: `[Platform] Bid ${bidId} rejected on load ${bid.load_id}`,
+        idempotencyKey: buildDedupeKey(["ADMIN", "BID_REJECTED", bidId])
+      });
       void writeAudit({
         actorUserId: req.auth.userId,
         action: "bid.rejected",
@@ -328,6 +349,13 @@ router.put(
         message: `Shipper counter offer: PKR ${amount}`
       });
       emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.COUNTER, { bidId });
+      void notifyAdmins({
+        senderId: req.auth.userId,
+        title: "BID_COUNTER",
+        type: "BID_COUNTER",
+        message: `[Platform] Shipper counter offer PKR ${amount} on bid ${bidId}`,
+        idempotencyKey: buildDedupeKey(["ADMIN", "BID_COUNTER", bidId, "shipper"])
+      });
       void writeAudit({
         actorUserId: req.auth.userId,
         action: "bid.countered",
@@ -422,6 +450,13 @@ router.put(
         message: `Carrier counter offer: PKR ${amount}`
       });
       emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.COUNTER, { bidId });
+      void notifyAdmins({
+        senderId: req.auth.userId,
+        title: "BID_COUNTER",
+        type: "BID_COUNTER",
+        message: `[Platform] Carrier counter offer PKR ${amount} on bid ${bidId}`,
+        idempotencyKey: buildDedupeKey(["ADMIN", "BID_COUNTER", bidId, "carrier"])
+      });
       void writeAudit({
         actorUserId: req.auth.userId,
         action: "bid.countered",
@@ -693,7 +728,7 @@ router.put(
         metadata: { bidId, bookingId }
       });
 
-      await emitBidStateChange({
+      void emitBidStateChange({
         receiverId: bid.carrier_id,
         senderId: bid.shipper_id,
         roleType: "carrier",
@@ -701,7 +736,7 @@ router.put(
         title: "BID_ACCEPTED",
         message: "Your bid was accepted. Contract is active."
       });
-      await emitBidStateChange({
+      void emitBidStateChange({
         receiverId: bid.shipper_id,
         senderId: bid.carrier_id,
         roleType: "shipper",
@@ -710,6 +745,14 @@ router.put(
         message: "Load booked. You can now contact the carrier."
       });
       emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.ACCEPTED, { bidId, loadId: bid.load_id });
+
+      void notifyAdmins({
+        senderId: req.auth.userId,
+        title: "BID_ACCEPTED",
+        type: "BID_ACCEPTED",
+        message: `[Platform] Bid ${bidId} accepted — load ${bid.load_id} booked`,
+        idempotencyKey: buildDedupeKey(["ADMIN", "BID_ACCEPTED", bidId])
+      });
 
       return sendSuccess(res, 200, { ok: true, bookingId, flowStatus: "ACCEPTED", loadFlowStatus: "ACTIVE" }, "Accepted");
     } catch (err) {

@@ -9,6 +9,9 @@ const { safeDestroyReplacedUrl } = require("../utils/cloudinaryUrl");
 const { signToken } = require("../utils/jwt");
 const { authData } = require("../utils/authPayload");
 const { isAllowedImageUrl } = require("../utils/imageUrl");
+const { notifyAdmins } = require("../utils/notifyEvent");
+const { buildDedupeKey } = require("../utils/realtimeDispatch");
+const { computeProfileComplete } = require("../utils/profileCompletion");
 
 const CNIC_REGEX = /^[0-9]{5}-[0-9]{7}-[0-9]{1}$/;
 const UPLOAD_FAIL_USER_MSG = "File upload failed, please try again";
@@ -30,15 +33,12 @@ function validationErrorResponse(req, res) {
   });
 }
 
-function computeProfileComplete(fields) {
-  return (
-    Boolean(fields.fullName) &&
-    Boolean(fields.phone) &&
-    Boolean(fields.cnicNumber) &&
-    Boolean(fields.cnicImage) &&
-    Boolean(fields.cnicImageBack) &&
-    Boolean(fields.profileImage)
-  );
+function computeProfileCompleteFromFields(fields) {
+  return computeProfileComplete({
+    cnicImage: fields.cnicImage,
+    cnicImageBack: fields.cnicImageBack,
+    verified: fields.verified
+  });
 }
 
 function validateDiskFile(file) {
@@ -90,7 +90,11 @@ async function getProfile(req, res) {
       cnic_image: user.cnicImage,
       cnic_image_back: user.cnicImageBack,
       profile_image: user.profileImage,
-      is_profile_complete: user.isProfileComplete
+      is_profile_complete: computeProfileComplete({
+        cnicImage: user.cnicImage,
+        cnicImageBack: user.cnicImageBack,
+        verified: user.verified
+      })
     });
   } catch {
     return sendError(res, 500, "Could not load profile");
@@ -101,7 +105,13 @@ async function getProfileStatus(req, res) {
   try {
     const user = await userRepo.findById(req.auth.userId);
     if (!user) return sendError(res, 401, "Unauthorized");
-    return sendSuccess(res, 200, { is_profile_complete: user.isProfileComplete });
+    return sendSuccess(res, 200, {
+      is_profile_complete: computeProfileComplete({
+        cnicImage: user.cnicImage,
+        cnicImageBack: user.cnicImageBack,
+        verified: user.verified
+      })
+    });
   } catch {
     return sendError(res, 500, "Could not load profile status");
   }
@@ -193,13 +203,10 @@ async function updateProfile(req, res) {
       );
     }
 
-    const isComplete = computeProfileComplete({
-      fullName: next.full_name,
-      phone: next.phone,
-      cnicNumber: next.cnic_number,
+    const isComplete = computeProfileCompleteFromFields({
       cnicImage: next.cnic_image,
       cnicImageBack: next.cnic_image_back,
-      profileImage: next.profile_image
+      verified: user.verified
     });
 
     for (const [field, val] of [
@@ -267,6 +274,18 @@ async function updateProfile(req, res) {
     const finalUser = await userRepo.findById(rows[0].id);
     if (!finalUser) {
       return sendError(res, 500, "Profile update failed");
+    }
+
+    const cnicDocsComplete = Boolean(finalUser.cnicImage && finalUser.cnicImageBack);
+    const cnicWasIncomplete = !Boolean(user.cnicImage && user.cnicImageBack);
+    if (cnicDocsComplete && cnicWasIncomplete && !finalUser.verified) {
+      void notifyAdmins({
+        senderId: req.auth.userId,
+        title: "VERIFICATION_PENDING",
+        type: "VERIFICATION_PENDING",
+        message: `[Platform] CNIC verification pending for ${finalUser.email || finalUser.fullName || req.auth.userId}`,
+        idempotencyKey: buildDedupeKey(["ADMIN", "VERIFICATION_PENDING", req.auth.userId])
+      });
     }
 
     const token = signToken(finalUser);
