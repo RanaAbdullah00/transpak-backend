@@ -228,6 +228,19 @@ module.exports = function registerSocketHandlers(io) {
           return;
         }
 
+        const { normalizeShipmentStatus } = require("../utils/shipmentStatus");
+        const { rows: shipGate } = await db(
+          `SELECT status FROM shipments WHERE load_id = $1 LIMIT 1`,
+          [load.id]
+        );
+        const shipCanon = normalizeShipmentStatus(shipGate[0]?.status) || "posted";
+        if (!["booked", "pickedup", "intransit"].includes(shipCanon)) {
+          if (typeof ack === "function") {
+            ack({ ok: false, message: "Live tracking is available after the shipment is booked" });
+          }
+          return;
+        }
+
         const throttle = checkGpsThrottle(load.id);
         if (!throttle.ok) {
           if (typeof ack === "function") {
