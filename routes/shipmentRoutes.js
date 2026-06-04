@@ -98,16 +98,10 @@ async function resolveLoadForRef(refKey) {
   return rows[0] || null;
 }
 
+const { createShipmentUnified } = require("../utils/shipmentFactory");
+
 async function getOrCreateShipment(loadId) {
-  const { rows } = await query(
-    `INSERT INTO shipments (load_id, status, location_unavailable)
-     VALUES ($1, 'posted', true)
-     ON CONFLICT (load_id)
-     DO UPDATE SET load_id = EXCLUDED.load_id
-     RETURNING id, load_id, status, current_lat, current_lng, location_unavailable, updated_at`,
-    [loadId]
-  );
-  return rows[0];
+  return createShipmentUnified(null, { loadId, mode: "get_or_create" });
 }
 
 async function getShipmentHistory(shipmentId) {
@@ -272,6 +266,14 @@ router.put(
       const nextLoadStatus = canonical === "booked" ? "booked" : canonical === "closed" ? "closed" : load.status;
       if (nextLoadStatus && nextLoadStatus !== load.status) {
         await query(`UPDATE loads SET status = $2, updated_at = now() WHERE id = $1`, [load.id, nextLoadStatus]);
+      }
+      if (canonical === "intransit") {
+        await query(
+          `UPDATE carrier_space_requests
+           SET status = 'in_transit', updated_at = now()
+           WHERE load_id = $1 AND status IN ('active', 'accepted')`,
+          [load.id]
+        );
       }
       if (canonical === "delivered" || canonical === "closed") {
         await query(

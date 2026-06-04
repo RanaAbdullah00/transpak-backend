@@ -6,6 +6,7 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
+/** Phone/contact unlock only after commercial acceptance (not browse/negotiate/request_sent). */
 async function hasActiveContract(viewerId, targetId) {
   const { rows: acceptedBidRows } = await query(
     `SELECT 1 FROM bids b
@@ -20,10 +21,10 @@ async function hasActiveContract(viewerId, targetId) {
   );
   if (acceptedBidRows[0]) return true;
 
-  const { rows: shipRows } = await query(
+  const { rows: bookedLoadRows } = await query(
     `SELECT 1 FROM loads l
      WHERE l.assigned_carrier_id IS NOT NULL
-       AND l.status IN ('booked', 'closed', 'delivered')
+       AND l.status = 'booked'
        AND (
          (l.shipper_id = $1 AND l.assigned_carrier_id = $2)
          OR (l.shipper_id = $2 AND l.assigned_carrier_id = $1)
@@ -31,13 +32,13 @@ async function hasActiveContract(viewerId, targetId) {
      LIMIT 1`,
     [viewerId, targetId]
   );
-  if (shipRows[0]) return true;
+  if (bookedLoadRows[0]) return true;
 
   const { rows: activeShipmentRows } = await query(
     `SELECT 1 FROM shipments s
      JOIN loads l ON l.id = s.load_id
      WHERE l.assigned_carrier_id IS NOT NULL
-       AND s.status NOT IN ('cancelled')
+       AND s.status IN ('booked', 'pickedup', 'intransit', 'delivered', 'closed')
        AND (
          (l.shipper_id = $1 AND l.assigned_carrier_id = $2)
          OR (l.shipper_id = $2 AND l.assigned_carrier_id = $1)
@@ -50,7 +51,7 @@ async function hasActiveContract(viewerId, targetId) {
   const { rows: spaceRows } = await query(
     `SELECT 1 FROM carrier_space_requests r
      JOIN carrier_space_listings l ON l.id = r.listing_id
-     WHERE r.status IN ('request_sent', 'accepted', 'active', 'in_transit', 'completed')
+     WHERE r.status IN ('active', 'in_transit', 'completed')
        AND (
          (r.shipper_id = $1 AND l.carrier_id = $2)
          OR (r.shipper_id = $2 AND l.carrier_id = $1)
@@ -58,16 +59,7 @@ async function hasActiveContract(viewerId, targetId) {
      LIMIT 1`,
     [viewerId, targetId]
   );
-  if (spaceRows[0]) return true;
-
-  const { rows: chatRows } = await query(
-    `SELECT 1 FROM conversations c
-     WHERE (c.user_a_id = $1 AND c.user_b_id = $2)
-        OR (c.user_a_id = $2 AND c.user_b_id = $1)
-     LIMIT 1`,
-    [viewerId, targetId]
-  );
-  return Boolean(chatRows[0]);
+  return Boolean(spaceRows[0]);
 }
 
 async function getPublicProfile(req, res) {
@@ -137,13 +129,18 @@ async function getPublicProfile(req, res) {
   const lastActive = recentBid[0]?.last ? new Date(recentBid[0].last) : null;
   const isActiveNow = lastActive && Date.now() - lastActive.getTime() < 7 * 24 * 60 * 60 * 1000;
 
+  const contactPhone = showPhone ? user.phone : null;
+
   return sendSuccess(res, 200, {
     id: user.id,
     fullName: user.fullName || user.email?.split("@")[0] || "User",
+    companyName: user.fullName || null,
     roles: (user.roles || []).filter((r) => r === "shipper" || r === "carrier"),
     profileImage: user.profileImage,
-    phone: showPhone ? user.phone : null,
+    phone: contactPhone,
     phoneLocked: !showPhone,
+    whatsapp: contactPhone,
+    whatsappLocked: !showPhone,
     profileComplete: Boolean(user.profileComplete),
     verified: Boolean(user.verified),
     joinedAt: user.joinedAt,

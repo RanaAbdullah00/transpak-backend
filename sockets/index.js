@@ -236,12 +236,8 @@ module.exports = function registerSocketHandlers(io) {
           return;
         }
 
-        await db(
-          `INSERT INTO shipments (load_id, status, location_unavailable)
-           VALUES ($1, 'posted', true)
-           ON CONFLICT (load_id) DO NOTHING`,
-          [load.id]
-        );
+        const { createShipmentUnified } = require("../utils/shipmentFactory");
+        await createShipmentUnified({ query: db }, { loadId: load.id, mode: "posted_gps" });
         const result = await db(
           `UPDATE shipments
            SET current_lat = $2, current_lng = $3, location_unavailable = false, updated_at = now()

@@ -15,6 +15,7 @@ const {
 } = require("../utils/shipmentStatus");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { writeAudit } = require("../utils/auditLog");
+const { logAdminView } = require("../utils/adminAudit");
 const realtimeHub = require("../services/realtimeHub");
 const { notifyUser } = require("../utils/notifyEvent");
 const { adminSessionAudit } = require("../middleware/adminSessionAudit");
@@ -150,6 +151,7 @@ router.get(
        LIMIT 500`,
       params
     );
+    logAdminView(req, "admin_view_user", { targetEntity: "users", count: rows.length });
     return sendSuccess(res, 200, rows);
   })
 );
@@ -254,10 +256,50 @@ router.get(
        ORDER BY s.updated_at DESC
        LIMIT 500`
     );
+    logAdminView(req, "admin_view_shipment", { targetEntity: "shipments", count: rows.length });
     return sendSuccess(res, 200, rows);
   })
 );
 
+router.get(
+  "/carrier-space",
+  asyncHandler(async (req, res) => {
+    const { rows: listings } = await query(
+      `SELECT s.id, s.origin, s.destination, s.status,
+              s.remaining_space_kg AS "remainingSpaceKg",
+              s.truck_capacity_kg AS "truckCapacityKg",
+              s.available_from AS "availableFrom",
+              s.created_at AS "createdAt",
+              COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName",
+              (SELECT COUNT(*)::int FROM carrier_space_requests r
+               WHERE r.listing_id = s.id AND r.status = 'request_sent') AS "pendingRequests"
+       FROM carrier_space_listings s
+       JOIN users u ON u.id = s.carrier_id
+       ORDER BY s.updated_at DESC
+       LIMIT 500`
+    );
+    const { rows: requests } = await query(
+      `SELECT r.id, r.status, r.requested_kg AS "requestedKg", r.created_at AS "createdAt",
+              l.origin, l.destination,
+              COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
+              COALESCE(uc.full_name, uc.email, 'Carrier') AS "carrierName"
+       FROM carrier_space_requests r
+       JOIN carrier_space_listings l ON l.id = r.listing_id
+       JOIN users us ON us.id = r.shipper_id
+       JOIN users uc ON uc.id = l.carrier_id
+       ORDER BY r.updated_at DESC
+       LIMIT 500`
+    );
+    logAdminView(req, "admin_view_capacity", {
+      targetEntity: "carrier_space",
+      listings: listings.length,
+      requests: requests.length
+    });
+    return sendSuccess(res, 200, { listings, requests });
+  })
+);
+
+/** Read-only governance: admins monitor shipments; carriers own status updates. */
 router.patch(
   "/shipments/:id/status",
   [
@@ -267,72 +309,21 @@ router.patch(
   ],
   validate,
   asyncHandler(async (req, res) => {
-    const shipmentId = String(req.params.id);
-    const nextStatus = normalizeShipmentStatus(req.body.status);
-    if (!nextStatus) return sendError(res, 400, "Invalid status");
-    const force = Boolean(req.body.force);
-
-    const { rows: existing } = await query(
-      `SELECT s.id, s.status, s.load_id AS "loadId", l.status AS "loadStatus", l.code
-       FROM shipments s
-       INNER JOIN loads l ON l.id = s.load_id
-       WHERE s.id = $1`,
-      [shipmentId]
-    );
-    if (!existing[0]) return sendError(res, 404, "Shipment not found");
-
-    const current = existing[0].status;
-    if (!force) {
-      const check = validateShipmentTransition(current, nextStatus);
-      if (!check.ok) return sendError(res, 400, check.message || "Invalid transition");
+    if (process.env.NODE_ENV !== "test") {
+      // eslint-disable-next-line no-console
+      console.warn("[admin] blocked shipment status write", {
+        adminId: req.auth?.userId,
+        shipmentId: req.params.id,
+        attemptedStatus: req.body?.status
+      });
     }
-
-    const { rows } = await query(
-      `UPDATE shipments
-       SET status = $2::shipment_status, updated_at = now()
-       WHERE id = $1
-       RETURNING id, load_id AS "loadId", status`,
-      [shipmentId, nextStatus]
+    return sendError(
+      res,
+      403,
+      "Admin shipment status changes are disabled. Tracking is carrier-operated (read-only governance).",
+      null,
+      "ADMIN_SHIPMENT_READ_ONLY"
     );
-
-    await query(
-      `INSERT INTO shipment_events (shipment_id, status, note)
-       VALUES ($1, $2::shipment_status, $3)`,
-      [
-        shipmentId,
-        nextStatus,
-        `Admin ${req.auth.userId} set ${current} → ${nextStatus}${force ? " (forced)" : ""}`
-      ]
-    );
-
-    let loadStatus = existing[0].loadStatus;
-    if (nextStatus === "delivered" || nextStatus === "closed") {
-      const { rows: loadRows } = await query(
-        `UPDATE loads SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING status`,
-        [existing[0].loadId]
-      );
-      loadStatus = loadRows[0]?.status || loadStatus;
-    } else if (nextStatus === "booked" && loadStatus === "open") {
-      const { rows: loadRows } = await query(
-        `UPDATE loads SET status = 'booked', updated_at = now() WHERE id = $1 RETURNING status`,
-        [existing[0].loadId]
-      );
-      loadStatus = loadRows[0]?.status || loadStatus;
-    }
-
-    void writeAudit({
-      actorUserId: req.auth.userId,
-      action: "admin.shipment.status",
-      targetEntity: "shipment",
-      targetId: shipmentId,
-      metadata: { from: current, to: nextStatus, force }
-    });
-
-    return sendSuccess(res, 200, {
-      ...rows[0],
-      loadStatus,
-      code: existing[0].code
-    });
   })
 );
 

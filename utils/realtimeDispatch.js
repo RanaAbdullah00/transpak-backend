@@ -10,6 +10,7 @@ const {
   emitToBid
 } = require("../services/realtimeHub");
 const { recordDispatchFailure } = require("./opsTelemetry");
+const { resolveEventType } = require("./eventContractRegistry");
 
 const DISPATCH_TYPES = {
   LOAD_POSTED: "LOAD_POSTED",
@@ -85,7 +86,8 @@ function emitDispatchEvent(envelope, attempt = 0) {
   const roleType = envelope?.roleType;
   if (!receiverId || !roleType) return;
 
-  const row = buildDispatchRow(envelope);
+  const normalizedType = resolveEventType(envelope?.type);
+  const row = buildDispatchRow({ ...envelope, type: normalizedType });
 
   try {
     emitToUserRole(receiverId, roleType, "dispatch:event", row);

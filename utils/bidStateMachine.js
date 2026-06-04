@@ -22,7 +22,8 @@ const LOAD = {
   CANCELLED: "cancelled"
 };
 
-const MAX_COUNTER_ROUNDS = Number(process.env.BID_MAX_COUNTER_ROUNDS || 5);
+/** One counter round per bid (carrier suggest once → shipper accept/reject). */
+const MAX_COUNTER_ROUNDS = Number(process.env.BID_MAX_COUNTER_ROUNDS || 1);
 
 /** SQL fragment for open/active bids on a load */
 const ACTIVE_BID_STATUSES_SQL =

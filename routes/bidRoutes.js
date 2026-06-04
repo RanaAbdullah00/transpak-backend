@@ -22,12 +22,14 @@ const {
 } = require("../utils/bidStateMachine");
 const { emitBidStateChange, emitBidRefresh, BID_DISPATCH } = require("../utils/bidRealtime");
 const { notifyAdmins } = require("../utils/notifyEvent");
-const { buildDedupeKey, emitEntityDispatch, newEventId } = require("../utils/realtimeDispatch");
+const { buildDedupeKey, newEventId } = require("../utils/realtimeDispatch");
+const { emitContractEntityDispatch } = require("../utils/eventContractRegistry");
 const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
 const { assertNotSelfCommercial } = require("../utils/selfExclusion");
 const { requireCarrierTruckReady } = require("../middleware/commercialGates");
+const { createShipmentUnified, ensureShipmentBookedEvent } = require("../utils/shipmentFactory");
 const { writeAudit } = require("../utils/auditLog");
 const { forbidAdminOnlyCommercial } = require("../middleware/forbidAdminOnlyCommercial");
 const router = express.Router();
@@ -210,7 +212,7 @@ router.post(
       });
     }
     emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.CREATED, { bidId: rows[0].id, loadId });
-    emitEntityDispatch({
+    emitContractEntityDispatch({
       entityType: "bid",
       entityId: rows[0].id,
       type: BID_DISPATCH.CREATED,
@@ -313,6 +315,13 @@ router.put(
   ],
   validate,
   async (req, res) => {
+    return sendError(
+      res,
+      409,
+      "Shipper responds to carrier offers via accept or reject only (single-round negotiation).",
+      null,
+      "SHIPPER_COUNTER_DISABLED"
+    );
     try {
       const bidId = req.params.id;
       const amount = Number(req.body.amount);
@@ -706,25 +715,12 @@ router.put(
       );
       const bookingId = bookingRows[0]?.id;
 
-      await client.query(
-        `INSERT INTO shipments (load_id, booking_id, status, location_unavailable)
-         VALUES ($1, $2, 'booked', true)
-         ON CONFLICT (load_id)
-         DO UPDATE SET booking_id = EXCLUDED.booking_id, status = 'booked', updated_at = now()`,
-        [bid.load_id, bookingId]
-      );
-
-      await client.query(
-        `INSERT INTO shipment_events (shipment_id, status, note, location_label)
-         SELECT s.id, 'booked', NULL, 'System'
-         FROM shipments s
-         WHERE s.load_id = $1
-           AND NOT EXISTS (
-             SELECT 1 FROM shipment_events e
-             WHERE e.shipment_id = s.id AND e.status = 'booked'
-           )`,
-        [bid.load_id]
-      );
+      await createShipmentUnified(client, {
+        loadId: bid.load_id,
+        bookingId,
+        mode: "booked_upsert"
+      });
+      await ensureShipmentBookedEvent(client, { loadId: bid.load_id, note: null });
 
       await client.query("COMMIT");
 

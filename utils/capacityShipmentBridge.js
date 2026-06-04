@@ -1,4 +1,5 @@
 const { persistLoadRouteSnapshot } = require("./loadRouteSnapshot");
+const { createShipmentUnified, ensureShipmentBookedEvent } = require("./shipmentFactory");
 
 function generateCapacityLoadCode() {
   return `C-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -61,19 +62,17 @@ async function createShipmentFromCapacityAccept(client, requestRow, listing) {
   );
   const bookingId = bookingRows[0].id;
 
-  const { rows: shipRows } = await client.query(
-    `INSERT INTO shipments (load_id, booking_id, status, location_unavailable)
-     VALUES ($1, $2, 'booked', true)
-     RETURNING id`,
-    [loadId, bookingId]
-  );
-  const shipmentId = shipRows[0].id;
+  const shipRow = await createShipmentUnified(client, {
+    loadId,
+    bookingId,
+    mode: "booked_insert"
+  });
+  const shipmentId = shipRow?.id;
 
-  await client.query(
-    `INSERT INTO shipment_events (shipment_id, status, note, location_label)
-     VALUES ($1, 'booked', 'Capacity contract accepted', 'System')`,
-    [shipmentId]
-  );
+  await ensureShipmentBookedEvent(client, {
+    shipmentId,
+    note: "Capacity contract accepted"
+  });
 
   await client.query(
     `UPDATE carrier_space_requests SET load_id = $2, updated_at = now() WHERE id = $1`,

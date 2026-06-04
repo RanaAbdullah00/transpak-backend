@@ -325,12 +325,8 @@ async function createLoad(req, res) {
   );
   const load = { ...rows[0], flowStatus: apiLoadStatus(rows[0].status) };
   // ensure shipment row exists for tracking lifecycle
-  await query(
-    `INSERT INTO shipments (load_id, status, location_unavailable)
-     VALUES ($1, 'posted', true)
-     ON CONFLICT (load_id) DO NOTHING`,
-    [load.id]
-  );
+  const { createShipmentUnified } = require("../utils/shipmentFactory");
+  await createShipmentUnified(null, { loadId: load.id, mode: "posted_placeholder" });
   void (async () => {
     try {
       await persistLoadRouteSnapshot(load.id, pickupLoc, dropLoc);

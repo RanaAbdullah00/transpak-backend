@@ -1,5 +1,6 @@
-const { notifyUser } = require("./notifyEvent");
-const { emitDispatchEvent, emitEntityDispatch, newEventId } = require("./realtimeDispatch");
+const { notifyUnified } = require("./notifyUnified");
+const { emitContractDispatch, emitContractEntityDispatch } = require("./eventContractRegistry");
+const { newEventId } = require("./realtimeDispatch");
 
 const BID_DISPATCH = {
   CREATED: "BID_CREATED",
@@ -19,12 +20,11 @@ async function emitBidStateChange({
   message
 }) {
   if (!receiverId || !roleType || !dispatchType) return null;
-  return notifyUser({
+  return notifyUnified(dispatchType, {
     receiverId,
     senderId: senderId || null,
     roleType,
     title: title || dispatchType,
-    type: dispatchType,
     message: message || title || dispatchType
   });
 }
@@ -32,7 +32,7 @@ async function emitBidStateChange({
 /** List refresh on actor workspace without a new notification row. */
 function emitBidRefresh(userId, roleType, dispatchType = BID_DISPATCH.UPDATED, payload = null) {
   if (!userId || !roleType) return;
-  emitDispatchEvent({
+  emitContractDispatch({
     eventId: newEventId(),
     type: dispatchType,
     receiverId: userId,
@@ -42,7 +42,7 @@ function emitBidRefresh(userId, roleType, dispatchType = BID_DISPATCH.UPDATED, p
     payload
   });
   if (payload?.bidId) {
-    emitEntityDispatch({
+    emitContractEntityDispatch({
       entityType: "bid",
       entityId: payload.bidId,
       type: dispatchType,

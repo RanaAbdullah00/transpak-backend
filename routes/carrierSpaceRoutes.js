@@ -12,6 +12,7 @@ const {
   sendForbidden,
   FORBIDDEN_CODES
 } = require("../utils/resourceAuth");
+const { closeExpiredCapacityListings } = require("../utils/capacityListingLifecycle");
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ function validate(req, res, next) {
 }
 
 router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+  await closeExpiredCapacityListings();
   const origin = String(req.query?.origin || "").trim();
   const destination = String(req.query?.destination || "").trim();
   const vehicleType = String(req.query?.vehicleType || "").trim();
@@ -212,6 +214,9 @@ router.patch(
       req.body.availableFrom !== undefined ||
       req.body.notes !== undefined;
 
+    if (row.status === "closed" && status && status !== "closed") {
+      return sendError(res, 409, "Closed listings cannot be reactivated", null, "LISTING_CLOSED");
+    }
     if (hasFieldEdits) {
       if (row.status !== "open") {
         return sendError(res, 409, "Only open listings can be edited", null, "LISTING_LOCKED");

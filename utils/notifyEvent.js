@@ -1,5 +1,6 @@
 const { query } = require("../db/pool");
 const { buildDedupeKey, newEventId, emitDispatchEvent, DISPATCH_TYPES } = require("./realtimeDispatch");
+const { resolveEventType } = require("./eventContractRegistry");
 
 const MAX_CARRIER_BROADCAST = Number(process.env.LOAD_NOTIFY_CARRIER_LIMIT || 250);
 const SOCKET_FLUSH_MS = Number(process.env.NOTIFY_SOCKET_FLUSH_MS || 400);
@@ -145,7 +146,7 @@ async function insertNotification({ receiverId, senderId, roleType, title, messa
 
 async function notifyUser({ receiverId, senderId, roleType, title, message, type, idempotencyKey }) {
   if (!receiverId || !title || !message) return null;
-  const eventType = type || title;
+  const eventType = resolveEventType(type || title);
   const dedupeKey = idempotencyKey || dedupeKeyFromContent(receiverId, title, message);
   const now = Date.now();
   pruneMemoryDedupe(now);

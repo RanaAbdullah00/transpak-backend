@@ -9,7 +9,8 @@ const { assertSpaceTransition } = require("../utils/spaceRequestState");
 const { createShipmentFromCapacityAccept } = require("../utils/capacityShipmentBridge");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { writeAudit } = require("../utils/auditLog");
-const { emitEntityDispatch, newEventId } = require("../utils/realtimeDispatch");
+const { newEventId } = require("../utils/realtimeDispatch");
+const { emitContractEntityDispatch } = require("../utils/eventContractRegistry");
 const {
   canActOnSpaceRequestAsCarrier,
   canActOnSpaceRequestAsParty,
@@ -108,7 +109,7 @@ router.post(
       metadata: { listingId, requestedKg, origin: listing.origin, destination: listing.destination }
     });
 
-    emitEntityDispatch({
+    emitContractEntityDispatch({
       entityType: "space",
       entityId: rows[0].id,
       type: "SPACE_REQUEST",
@@ -126,6 +127,7 @@ router.get("/requests/incoming", protect, requireRole("carrier"), async (req, re
             r.requested_kg AS "requestedKg", r.message, r.status, r.created_at AS "createdAt",
             r.load_id AS "loadId", l.code AS "loadCode",
             sl.origin, sl.destination, sl.remaining_space_kg AS "remainingSpaceKg",
+            sl.rate_per_kg AS "ratePerKg", sl.available_from AS "availableFrom", sl.notes AS "listingNotes",
             COALESCE(u.full_name, u.email, 'Shipper') AS "shipperName"
      FROM carrier_space_requests r
      JOIN carrier_space_listings sl ON sl.id = r.listing_id
@@ -199,7 +201,7 @@ async function transitionRequest(req, res, nextStatus) {
       await client.query(
         `UPDATE carrier_space_listings
          SET remaining_space_kg = remaining_space_kg - $2,
-             status = CASE WHEN remaining_space_kg - $2 <= 0 THEN 'booked' ELSE status END,
+             status = CASE WHEN remaining_space_kg - $2 <= 0 THEN 'closed' ELSE status END,
              updated_at = now()
          WHERE id = $1`,
         [row.listing_id, row.requested_kg]
@@ -242,13 +244,14 @@ async function transitionRequest(req, res, nextStatus) {
       completed: ["SPACE_COMPLETED", "Capacity contract completed — leave a review"]
     };
     const [title, msgBase] = notifyMap[nextStatus] || ["SPACE_UPDATE", "Request updated"];
+    const dispatchType = shipmentBridge ? "CONTRACT_STARTED" : title;
     const refSuffix = shipmentBridge?.loadCode ? ` (${shipmentBridge.loadCode})` : '';
     await notifyUser({
       receiverId: row.shipper_id,
       senderId: row.carrier_id,
       roleType: "shipper",
-      title: shipmentBridge ? "CONTRACT_STARTED" : title,
-      type: shipmentBridge ? "CONTRACT_STARTED" : title,
+      title: dispatchType,
+      type: dispatchType,
       message: `${msgBase}${refSuffix}: ${row.origin} → ${row.destination}`
     });
 
@@ -272,16 +275,21 @@ async function transitionRequest(req, res, nextStatus) {
       }
     });
 
-    emitEntityDispatch({
+    emitContractEntityDispatch({
       entityType: "space",
       entityId: requestId,
-      type: title,
+      type: dispatchType,
       eventId: newEventId(),
-      payload: { requestId, status: dbStatus, loadId: shipmentBridge?.loadId || row.load_id || null }
+      payload: {
+        requestId,
+        status: dbStatus,
+        loadId: shipmentBridge?.loadId || row.load_id || null,
+        loadCode: shipmentBridge?.loadCode || null
+      }
     });
 
     if (shipmentBridge?.shipmentId) {
-      emitEntityDispatch({
+      emitContractEntityDispatch({
         entityType: "shipment",
         entityId: shipmentBridge.shipmentId,
         type: "CONTRACT_STARTED",
@@ -365,7 +373,7 @@ async function partyTransition(req, res, nextStatus) {
     targetId: requestId,
     metadata: { origin: row.origin, destination: row.destination }
   });
-  emitEntityDispatch({
+  emitContractEntityDispatch({
     entityType: "space",
     entityId: requestId,
     type: nextStatus === "in_transit" ? "SPACE_IN_TRANSIT" : "SPACE_COMPLETED",

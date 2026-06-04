@@ -202,6 +202,15 @@ async function validateCounterBid({ actorRole, carrierUserId, bid, load }) {
     return { ok: false, status: 409, message: "Bidding deadline has passed", code: "BID_DEADLINE_PASSED" };
   }
 
+  if (Number(bid.counter_round_count) >= 1) {
+    return {
+      ok: false,
+      status: 409,
+      message: "Only one counter offer is allowed per bid",
+      code: "COUNTER_LIMIT_REACHED"
+    };
+  }
+
   if (actorRole === "carrier") {
     const eligibility = await fleetMatchesLoad(await getCarrierFleetProfile(carrierUserId), load);
     if (!eligibility.ok) return eligibility;

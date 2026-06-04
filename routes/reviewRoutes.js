@@ -42,7 +42,7 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
        JOIN loads l ON l.id = s.load_id
        LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
        LEFT JOIN users us ON us.id = l.shipper_id
-       WHERE s.status IN ('delivered', 'closed')
+       WHERE s.status = 'closed'
          AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
          AND NOT EXISTS (
            SELECT 1 FROM ratings r WHERE r.shipment_id = s.id AND r.from_user_id = $1
@@ -77,6 +77,13 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
        LEFT JOIN users us ON us.id = r.shipper_id
        WHERE r.status = 'completed'
          AND (r.shipper_id = $1 OR l.carrier_id = $1)
+         AND (
+           r.load_id IS NULL
+           OR EXISTS (
+             SELECT 1 FROM shipments s
+             WHERE s.load_id = r.load_id AND s.status = 'closed'
+           )
+         )
          AND NOT EXISTS (
            SELECT 1 FROM ratings rt
            WHERE rt.space_request_id = r.id AND rt.from_user_id = $1
@@ -146,8 +153,8 @@ router.post(
       );
       const ship = shipRows[0];
       if (!ship) return sendError(res, 400, "Shipment not found for this load");
-      if (!["delivered", "closed"].includes(String(ship.status))) {
-        return sendError(res, 409, "Reviews are allowed after delivery is completed");
+      if (String(ship.status) !== "closed") {
+        return sendError(res, 409, "Reviews are allowed only after the shipment is closed");
       }
       if (
         ship.shipper_id &&
@@ -175,7 +182,7 @@ router.post(
       ));
     } else {
       const { rows: reqRows } = await query(
-        `SELECT r.id, r.status, r.shipper_id, l.carrier_id
+        `SELECT r.id, r.status, r.shipper_id, r.load_id, l.carrier_id
          FROM carrier_space_requests r
          JOIN carrier_space_listings l ON l.id = r.listing_id
          WHERE r.id = $1`,
@@ -185,6 +192,15 @@ router.post(
       if (!row) return sendError(res, 404, "Space request not found");
       if (String(row.status) !== "completed") {
         return sendError(res, 409, "Reviews are allowed after the capacity contract is completed");
+      }
+      if (row.load_id) {
+        const { rows: shipRows } = await query(
+          `SELECT status FROM shipments WHERE load_id = $1 LIMIT 1`,
+          [row.load_id]
+        );
+        if (!shipRows[0] || String(shipRows[0].status) !== "closed") {
+          return sendError(res, 409, "Reviews are allowed only after the linked shipment is closed");
+        }
       }
       const isShipper = String(row.shipper_id) === uid;
       const isCarrier = String(row.carrier_id) === uid;
