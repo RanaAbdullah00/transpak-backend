@@ -131,10 +131,20 @@ router.get(
         `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
                 l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
                 l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
-                s.status AS "shipmentStatus", s.updated_at AS "updatedAt"
+                s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
+                CASE
+                  WHEN l.booking_reference IS NOT NULL AND l.booking_reference LIKE 'space:%'
+                  THEN 'CAPACITY'
+                  ELSE 'BID'
+                END AS "flowType",
+                CASE
+                  WHEN s.status NOT IN ('delivered', 'closed', 'completed')
+                  THEN true
+                  ELSE false
+                END AS "trackingEnabled"
          FROM shipments s
          JOIN loads l ON l.id = s.load_id
-         WHERE s.status NOT IN ('delivered', 'closed')
+         WHERE s.status NOT IN ('delivered', 'closed', 'completed')
            AND l.status = 'booked'
            AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
          ORDER BY s.updated_at DESC

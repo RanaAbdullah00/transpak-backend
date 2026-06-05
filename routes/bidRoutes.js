@@ -765,7 +765,23 @@ router.put(
         idempotencyKey: buildDedupeKey(["ADMIN", "BID_ACCEPTED", bidId])
       });
 
-      return sendSuccess(res, 200, { ok: true, bookingId, flowStatus: "ACCEPTED", loadFlowStatus: "ACTIVE" }, "Accepted");
+      const { rows: codeRows } = await query(
+        `SELECT code AS "loadCode", id AS "loadId" FROM loads WHERE id = $1`,
+        [bid.load_id]
+      );
+      return sendSuccess(
+        res,
+        200,
+        {
+          ok: true,
+          bookingId,
+          loadId: bid.load_id,
+          loadCode: codeRows[0]?.loadCode || null,
+          flowStatus: "ACCEPTED",
+          loadFlowStatus: "ACTIVE"
+        },
+        "Accepted"
+      );
     } catch (err) {
       try {
         await client.query("ROLLBACK");
