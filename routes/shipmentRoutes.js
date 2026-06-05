@@ -131,7 +131,7 @@ router.get(
         `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
                 l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
                 l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
-                s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
+                s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
                 CASE
                   WHEN l.booking_reference IS NOT NULL AND l.booking_reference LIKE 'space:%'
                   THEN 'CAPACITY'

@@ -775,7 +775,11 @@ router.put(
       });
 
       const { rows: codeRows } = await query(
-        `SELECT code AS "loadCode", id AS "loadId" FROM loads WHERE id = $1`,
+        `SELECT l.code AS "loadCode", l.id AS "loadId", s.id AS "shipmentId"
+         FROM loads l
+         LEFT JOIN shipments s ON s.load_id = l.id
+         WHERE l.id = $1
+         LIMIT 1`,
         [bid.load_id]
       );
       return sendSuccess(
@@ -786,6 +790,7 @@ router.put(
           bookingId,
           loadId: bid.load_id,
           loadCode: codeRows[0]?.loadCode || null,
+          shipmentId: codeRows[0]?.shipmentId || null,
           flowStatus: "ACCEPTED",
           loadFlowStatus: "ACTIVE"
         },

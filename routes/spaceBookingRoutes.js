@@ -343,7 +343,8 @@ async function transitionRequest(req, res, nextStatus) {
       ok: true,
       status: dbStatus.toUpperCase(),
       loadId: shipmentBridge?.loadId || row.load_id || null,
-      loadCode: shipmentBridge?.loadCode || null
+      loadCode: shipmentBridge?.loadCode || null,
+      shipmentId: shipmentBridge?.shipmentId || null
     });
   } catch (err) {
     try {
