@@ -595,7 +595,7 @@ router.put(
       const { rows: bidRows } = await client.query(
         `SELECT b.id, b.load_id, b.carrier_id, b.amount, b.status,
                 b.suggested_amount AS suggested_amount, b.suggested_by AS suggested_by,
-                l.id AS load_id_locked, l.shipper_id, l.status AS load_status, l.accepted_bid_id
+                l.id AS load_id_locked, l.code AS load_code, l.shipper_id, l.status AS load_status, l.accepted_bid_id
          FROM bids b
          JOIN loads l ON l.id = b.load_id
          WHERE b.id = $1
@@ -755,7 +755,16 @@ router.put(
         title: "CONTRACT_STARTED",
         message: "Load booked. You can now contact the carrier."
       });
-      emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.ACCEPTED, { bidId, loadId: bid.load_id });
+      emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.ACCEPTED, {
+        bidId,
+        loadId: bid.load_id,
+        loadCode: bid.load_code || null
+      });
+      emitBidRefresh(bid.carrier_id, "carrier", BID_DISPATCH.ACCEPTED, {
+        bidId,
+        loadId: bid.load_id,
+        loadCode: bid.load_code || null
+      });
 
       void notifyAdmins({
         senderId: req.auth.userId,

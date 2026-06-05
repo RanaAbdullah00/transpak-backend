@@ -10,7 +10,7 @@ const { createShipmentFromCapacityAccept } = require("../utils/capacityShipmentB
 const { asyncHandler } = require("../utils/asyncHandler");
 const { writeAudit } = require("../utils/auditLog");
 const { newEventId } = require("../utils/realtimeDispatch");
-const { emitContractEntityDispatch } = require("../utils/eventContractRegistry");
+const { emitContractDispatch, emitContractEntityDispatch } = require("../utils/eventContractRegistry");
 const {
   canActOnSpaceRequestAsCarrier,
   canActOnSpaceRequestAsParty,
@@ -254,6 +254,42 @@ async function transitionRequest(req, res, nextStatus) {
       type: dispatchType,
       message: `${msgBase}${refSuffix}: ${row.origin} → ${row.destination}`
     });
+
+    if (shipmentBridge) {
+      const contractPayload = {
+        requestId,
+        loadId: shipmentBridge.loadId,
+        loadCode: shipmentBridge.loadCode,
+        shipmentId: shipmentBridge.shipmentId
+      };
+      emitContractDispatch({
+        eventId: newEventId(),
+        type: "CONTRACT_STARTED",
+        receiverId: row.shipper_id,
+        roleType: "shipper",
+        entityType: "space",
+        entityId: requestId,
+        payload: contractPayload
+      });
+      void notifyUser({
+        receiverId: row.carrier_id,
+        senderId: row.shipper_id,
+        roleType: "carrier",
+        title: "CONTRACT_STARTED",
+        type: "CONTRACT_STARTED",
+        message: `Capacity contract is now active${refSuffix}: ${row.origin} → ${row.destination}`,
+        idempotencyKey: buildDedupeKey(["CONTRACT_STARTED", "carrier", requestId, shipmentBridge.loadId])
+      });
+      emitContractDispatch({
+        eventId: newEventId(),
+        type: "CONTRACT_STARTED",
+        receiverId: row.carrier_id,
+        roleType: "carrier",
+        entityType: "space",
+        entityId: requestId,
+        payload: contractPayload
+      });
+    }
 
     void notifyAdmins({
       senderId: req.auth.userId,

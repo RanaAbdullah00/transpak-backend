@@ -98,10 +98,17 @@ async function buildEventSync(auth, req) {
     notifRows.forEach((n) => {
       const t = String(n.title || "").toUpperCase();
       if (t.includes("BID")) refreshScopes.add("bids");
-      if (t.includes("SHIPMENT") || t.includes("DELIVERY") || t.includes("PICKED") || t.includes("TRANSIT")) {
+      if (
+        t.includes("SHIPMENT") ||
+        t.includes("DELIVERY") ||
+        t.includes("PICKED") ||
+        t.includes("TRANSIT") ||
+        t.includes("CONTRACT_STARTED") ||
+        t.includes("BID_ACCEPTED")
+      ) {
         refreshScopes.add("shipments");
       }
-      if (t.includes("SPACE") || t.includes("CAPACITY") || t.includes("CONTRACT")) refreshScopes.add("space");
+      if (t.includes("SPACE") || t.includes("CAPACITY")) refreshScopes.add("space");
       if (t.includes("LOAD")) refreshScopes.add("loads");
     });
   }
