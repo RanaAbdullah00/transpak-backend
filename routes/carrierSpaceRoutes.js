@@ -90,7 +90,10 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
             created_at AS "createdAt", updated_at AS "updatedAt",
             (SELECT COUNT(*)::int FROM carrier_space_requests r
              WHERE r.listing_id = carrier_space_listings.id
-               AND r.status IN ('active', 'in_transit', 'completed')) AS "acceptedRequestCount"
+               AND r.status IN ('active', 'in_transit', 'completed')) AS "acceptedRequestCount",
+            (SELECT COUNT(*)::int FROM carrier_space_requests r
+             WHERE r.listing_id = carrier_space_listings.id
+               AND r.status IN ('active', 'in_transit')) AS "activeRequestCount"
      FROM carrier_space_listings
      WHERE carrier_id = $1
      ORDER BY created_at DESC
@@ -216,6 +219,23 @@ router.patch(
 
     if (row.status === "closed" && status && status !== "closed") {
       return sendError(res, 409, "Closed listings cannot be reactivated", null, "LISTING_CLOSED");
+    }
+    if (status === "closed") {
+      const { rows: activeAgreements } = await dbQuery(
+        `SELECT 1 FROM carrier_space_requests
+         WHERE listing_id = $1 AND status IN ('active', 'in_transit')
+         LIMIT 1`,
+        [id]
+      );
+      if (activeAgreements.length) {
+        return sendError(
+          res,
+          409,
+          "Listing has an active agreement and cannot be closed",
+          null,
+          "LISTING_ACTIVE"
+        );
+      }
     }
     if (hasFieldEdits) {
       if (row.status !== "open") {
