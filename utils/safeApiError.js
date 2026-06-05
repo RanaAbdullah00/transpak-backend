@@ -31,11 +31,23 @@ function clientMessage(statusCode, message) {
   const status = Number(statusCode) || 500;
   const raw = String(message || "").trim();
   if (!isProduction()) return raw || (status >= 500 ? "Server error" : "Request failed");
-  if (status >= 500) return "Something went wrong";
+  if (status >= 500) return "The service is temporarily unavailable. Please try again shortly.";
   if (status === 404) return "Not found";
-  if (status === 403) return raw && !looksLikeLeak(raw) ? raw : "Forbidden";
-  if (status === 401) return "Unauthorized";
-  if (looksLikeLeak(raw)) return status >= 400 && status < 500 ? "Request failed" : "Something went wrong";
+  if (status === 403) {
+    return raw && !looksLikeLeak(raw)
+      ? raw
+      : "You do not have permission to access this resource.";
+  }
+  if (status === 401) return raw && !looksLikeLeak(raw) ? raw : "Please sign in to continue.";
+  if (looksLikeLeak(raw)) {
+    return status >= 500
+      ? "The service is temporarily unavailable. Please try again shortly."
+      : status === 403
+        ? "You do not have permission for this action."
+        : status === 401
+          ? "Please sign in to continue."
+          : "Request failed";
+  }
   return raw || "Request failed";
 }
 

@@ -6,8 +6,11 @@
 
 const { clientMessage, sanitizeErrorData } = require("./safeApiError");
 
-function resolveErrorType(status) {
-  if (status === 401 || status === 403) return "AUTH";
+function resolveErrorType(status, code) {
+  const c = String(code || "").toUpperCase();
+  if (status === 401 || c === "AUTH_INVALID") return "AUTH";
+  if (status === 403 || c.startsWith("FORBIDDEN")) return "ROLE";
+  if (status === 422 || c === "VALIDATION_ERROR") return "VALIDATION";
   if (status >= 500) return "SERVER";
   if (status >= 400) return "VALIDATION";
   return "SERVER";
@@ -35,7 +38,15 @@ function sendError(res, statusCode, message, data = null, code = null, meta = nu
   const status = statusCode || 400;
   const resolvedCode =
     code ||
-    (status >= 500 ? "SERVER_ERROR" : status === 404 ? "NOT_FOUND" : status === 403 ? "FORBIDDEN" : "ERROR");
+    (status >= 500
+      ? "SERVER_ERROR"
+      : status === 404
+        ? "NOT_FOUND"
+        : status === 403
+          ? "FORBIDDEN_ROLE"
+          : status === 401
+            ? "AUTH_INVALID"
+            : "ERROR");
   const endpoint = String(res.req?.originalUrl || res.req?.url || "");
   const payload = {
     success: false,
@@ -45,12 +56,22 @@ function sendError(res, statusCode, message, data = null, code = null, meta = nu
     error: resolvedCode,
     endpoint,
     status,
-    type: resolveErrorType(status)
+    type: resolveErrorType(status, resolvedCode)
   };
   if (meta && typeof meta === "object") {
     if (meta.errors !== undefined) payload.errors = meta.errors;
     if (meta.deliveryReason !== undefined) payload.deliveryReason = meta.deliveryReason;
     if (meta.deliveryHint !== undefined) payload.deliveryHint = meta.deliveryHint;
+  }
+  if (status >= 400) {
+    // eslint-disable-next-line no-console
+    console.warn("[api] sendError", {
+      endpoint,
+      status,
+      code: resolvedCode,
+      userId: res.req?.user?.id || res.req?.auth?.user?.id || null,
+      at: new Date().toISOString()
+    });
   }
   return res.status(statusCode || 400).json(payload);
 }

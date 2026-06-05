@@ -45,8 +45,12 @@ describe("Phase 1 — deployment & error safety (static)", () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     try {
-      assert.equal(clientMessage(500, 'column "foo" does not exist'), "Something went wrong");
-      assert.equal(clientMessage(403, "Forbidden"), "Forbidden");
+      assert.equal(
+        clientMessage(500, 'column "foo" does not exist'),
+        "The service is temporarily unavailable. Please try again shortly."
+      );
+      assert.equal(clientMessage(403, ""), "You do not have permission to access this resource.");
+      assert.equal(clientMessage(401, ""), "Please sign in to continue.");
     } finally {
       process.env.NODE_ENV = prev;
     }

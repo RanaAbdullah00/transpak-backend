@@ -49,7 +49,16 @@ function globalErrorMiddleware(err, req, res, next) {
     error: code,
     endpoint,
     status,
-    type: status === 401 || status === 403 ? "AUTH" : status >= 500 ? "SERVER" : status >= 400 ? "VALIDATION" : "SERVER"
+    type:
+      status === 401
+        ? "AUTH"
+        : status === 403
+          ? "ROLE"
+          : status >= 500
+            ? "SERVER"
+            : status >= 400
+              ? "VALIDATION"
+              : "SERVER"
   };
 
   return res.status(status).json(payload);

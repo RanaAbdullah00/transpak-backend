@@ -13,7 +13,7 @@ async function requireAuth(req, res, next) {
 
     if (scheme !== "Bearer" || !token) {
       recordAuthFailure("missing_token");
-      return sendError(res, 401, "Unauthorized");
+      return sendError(res, 401, "Unauthorized access", null, "AUTH_INVALID");
     }
 
     let decoded;
@@ -21,19 +21,19 @@ async function requireAuth(req, res, next) {
       decoded = verifyToken(token);
     } catch {
       recordAuthFailure("invalid_token");
-      return sendError(res, 401, "Unauthorized");
+      return sendError(res, 401, "Unauthorized access", null, "AUTH_INVALID");
     }
 
     const userId = decoded?.sub;
     if (!userId) {
       recordAuthFailure("missing_sub");
-      return sendError(res, 401, "Unauthorized");
+      return sendError(res, 401, "Unauthorized access", null, "AUTH_INVALID");
     }
 
     const ctx = await buildAuthContextFromDB(userId);
     if (!ctx?.user) {
       recordAuthFailure("user_not_found");
-      return sendError(res, 401, "Unauthorized");
+      return sendError(res, 401, "Unauthorized access", null, "AUTH_INVALID");
     }
 
     const user = ctx.user;
@@ -51,7 +51,7 @@ async function requireAuth(req, res, next) {
 
     return next();
   } catch (err) {
-    return sendError(res, 401, "Unauthorized");
+    return sendError(res, 401, "Unauthorized access", null, "AUTH_INVALID");
   }
 }
 
