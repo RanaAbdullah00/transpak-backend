@@ -185,6 +185,37 @@ router.get(
 );
 
 router.get(
+  "/:id/status",
+  protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
+  shipmentIdParam,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const load = await resolveLoadForRef(req.params.id);
+      if (!load) return sendError(res, 404, "Not found");
+      assertTrackAccessOrThrow(load, req.auth);
+
+      const shipment = await getOrCreateShipment(load.id);
+      const history = await getShipmentHistory(shipment.id);
+      const canonical = normalizeShipmentStatus(shipment.status) || "posted";
+
+      return sendSuccess(res, 200, {
+        ref: trackingRefKey(load),
+        status: canonical,
+        history,
+        trackingEnabled: !["delivered", "closed", "completed"].includes(canonical)
+      });
+    } catch (err) {
+      const status = err.statusCode || 500;
+      const safeMsg =
+        status >= 500 ? "Server error" : err.message || "Request failed";
+      return sendError(res, status, safeMsg);
+    }
+  }
+);
+
+router.get(
   "/track/:id",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),

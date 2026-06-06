@@ -216,6 +216,13 @@ router.get(
   requireLoadRead("id"),
   async (req, res) => {
     const load = req.loadRow;
+    const { rows: bidRows } = await query(
+      `SELECT COUNT(*)::int AS c
+       FROM bids b
+       WHERE b.load_id = $1
+         AND b.status IN ('pending_shipper_confirmation','counter_offered','pending','suggested')`,
+      [load.id]
+    );
     return sendSuccess(res, 200, {
       id: load.id,
       code: load.code,
@@ -230,6 +237,7 @@ router.get(
       status: load.status,
       shipperId: load.shipper_id,
       assignedCarrierId: load.assigned_carrier_id,
+      bidCount: bidRows[0]?.c ?? 0,
       createdAt: load.created_at,
       updatedAt: load.updated_at
     });
