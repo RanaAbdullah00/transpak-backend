@@ -1,6 +1,7 @@
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
 const loadRepo = require("../repositories/loadRepo");
 const { runMarketplaceExpiryProcessor } = require("../../utils/loadExpiry");
+const { getCarrierFleetProfile } = require("../../utils/loadMatching");
 
 async function listOpen(req, res) {
   try {
@@ -14,7 +15,13 @@ async function listOpen(req, res) {
     const maxN = maxRaw ? Number(maxRaw) : null;
     if (minN != null && maxN != null && minN > maxN) return sendError(res, 400, "minPrice cannot exceed maxPrice");
 
-    // All open loads visible on freight board — fleet matching enforced at bid time only.
+    let carrierFleet = null;
+    try {
+      carrierFleet = await getCarrierFleetProfile(req.auth?.userId);
+    } catch {
+      carrierFleet = null;
+    }
+
     const result = await loadRepo.listOpenLoads({
       origin: q.origin,
       destination: q.destination,
@@ -29,7 +36,8 @@ async function listOpen(req, res) {
       sort: q.sort || "newest",
       limit: q.limit,
       offset: q.offset,
-      excludeCarrierId: req.auth?.userId
+      excludeCarrierId: req.auth?.userId,
+      carrierFleet
     });
     return sendSuccess(res, 200, result);
   } catch (err) {

@@ -8,6 +8,7 @@ const { version: APP_VERSION } = require(path.join(__dirname, "..", "package.jso
 const { SCHEMA_VERSION } = require("../db/schemaGuard");
 const { getSanitizedDatabaseInfo, formatSanitizedDatabaseLog } = require("./dbSanitizedInfo");
 const { normalizeCommit } = require("./normalizeCommit");
+const { getPublicFeatureFlags } = require("./featureFlags");
 
 const STAMP_PATH = path.join(__dirname, "..", ".render-build-stamp.json");
 
@@ -81,7 +82,8 @@ function getDeployIdentity() {
     bootHealthWait: true,
     nodeEnv: process.env.NODE_ENV || "undefined",
     databaseTarget: getSanitizedDatabaseInfo(),
-    render: Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID)
+    render: Boolean(process.env.RENDER || process.env.RENDER_SERVICE_ID),
+    featureFlags: getPublicFeatureFlags()
   };
 }
 

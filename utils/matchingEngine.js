@@ -1,19 +1,17 @@
 /**
  * Phase 4 — centralized marketplace matching (server-side only).
  * Vehicle type, capacity, route/pickup window, fleet availability, bidding expiry.
+ * Policy decisions delegate to policyEngine (single source).
  */
 const { OPEN_BIDDING_ELIGIBLE_SQL } = require("./loadExpiry");
-const { isVehicleTypeMismatchRelaxed } = require("./featureFlags");
+const {
+  normalizeVehicleType,
+  shouldFilterLoadsByVehicle,
+  shouldAllowBid
+} = require("./policyEngine");
 const { isBiddingOpen } = require("./loadDeadline");
 const { getCarrierFleetProfile } = require("./loadMatching");
 const { BID, normalizeBidStatus } = require("./bidStateMachine");
-
-function normalizeVehicleType(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-}
 
 /**
  * In-memory fleet vs load rules (mirrors SQL constraints).
@@ -21,52 +19,7 @@ function normalizeVehicleType(value) {
  * @param {object} load
  */
 function fleetMatchesLoad(fleet, load) {
-  if (!fleet?.truckCount) {
-    return {
-      ok: false,
-      status: 403,
-      message: "Add at least one active truck to your fleet",
-      code: "FLEET_REQUIRED"
-    };
-  }
-
-  const requiredType = normalizeVehicleType(load.vehicle_type ?? load.vehicleType);
-  if (requiredType) {
-    const types = (fleet.truckTypes || []).map(normalizeVehicleType).filter(Boolean);
-    if (!types.length || !types.includes(requiredType)) {
-      if (isVehicleTypeMismatchRelaxed()) {
-        // eslint-disable-next-line no-console
-        console.warn("[matching] VEHICLE_TYPE_MISMATCH relaxed — bid allowed", {
-          requiredType,
-          fleetTypes: types
-        });
-        return {
-          ok: true,
-          vehicleTypeMismatchWarning: true,
-          warningCode: "VEHICLE_TYPE_MISMATCH"
-        };
-      }
-      return {
-        ok: false,
-        status: 409,
-        message: "Your fleet has no truck matching this load vehicle type",
-        code: "VEHICLE_TYPE_MISMATCH"
-      };
-    }
-  }
-
-  const loadWeight = Number(load.weight ?? 0);
-  const maxCap = Number(fleet.maxCapacityTons ?? 0);
-  if (loadWeight > 0 && maxCap > 0 && loadWeight > maxCap) {
-    return {
-      ok: false,
-      status: 409,
-      message: `Load weight exceeds your fleet capacity (${maxCap} tons max)`,
-      code: "CAPACITY_EXCEEDED"
-    };
-  }
-
-  return { ok: true };
+  return shouldAllowBid(fleet, load);
 }
 
 /** Load is open and within bidding deadline. */
@@ -90,7 +43,7 @@ function buildCarrierMatchSql(fleet, startIndex) {
   let i = startIndex;
 
   const types = [...new Set((fleet?.truckTypes || []).map((t) => normalizeVehicleType(t)).filter(Boolean))];
-  if (types.length && !isVehicleTypeMismatchRelaxed()) {
+  if (types.length && shouldFilterLoadsByVehicle()) {
     params.push(types);
     clauses.push(`lower(trim(l.vehicle_type)) = ANY($${i++}::text[])`);
   }
@@ -184,8 +137,16 @@ async function validateBidPlacement({ carrierUserId, load, existingBid }) {
     }
   }
 
-  const eligibility = await fleetMatchesLoad(await getCarrierFleetProfile(carrierUserId), load);
+  const eligibility = await shouldAllowBid(await getCarrierFleetProfile(carrierUserId), load);
   if (!eligibility.ok) return eligibility;
+
+  if (eligibility.vehicleTypeMismatchWarning) {
+    return {
+      ok: true,
+      vehicleTypeMismatchWarning: true,
+      warningCode: eligibility.warningCode || "VEHICLE_TYPE_MISMATCH"
+    };
+  }
 
   return { ok: true };
 }
@@ -225,7 +186,7 @@ async function validateCounterBid({ actorRole, carrierUserId, bid, load }) {
   }
 
   if (actorRole === "carrier") {
-    const eligibility = await fleetMatchesLoad(await getCarrierFleetProfile(carrierUserId), load);
+    const eligibility = await shouldAllowBid(await getCarrierFleetProfile(carrierUserId), load);
     if (!eligibility.ok) return eligibility;
   }
 
@@ -239,6 +200,7 @@ module.exports = {
   OPEN_BIDDING_ELIGIBLE_SQL,
   ROUTE_PICKUP_ELIGIBLE_SQL,
   buildCarrierMatchSql,
+  shouldFilterLoadsByVehicle,
   assertCarrierCanAccessLoad,
   validateBidPlacement,
   validateCounterBid

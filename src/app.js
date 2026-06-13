@@ -258,6 +258,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api", (req, res, next) => {
     if (req.method === "OPTIONS") return next();
     if (req.path === "/health") return next();
+    if (req.path === "/system/policy-health") return next();
     if (dbState?.ready) return next();
     const lastErr = dbState?.error;
     const isProd = process.env.NODE_ENV === "production";
@@ -282,6 +283,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   });
 
   app.use("/api/public", require("../routes/publicRoutes"));
+  app.use("/api/system", require("../routes/systemRoutes"));
   app.use("/api/auth", authRoutes);
   const { forbidAdminOnlyCommercial } = require("../middleware/forbidAdminOnlyCommercial");
   app.use("/api/profile", forbidAdminOnlyCommercial, profileRoutes);
@@ -305,7 +307,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api/translations", translationRoutes);
   app.use("/api/upload", uploadRoutes);
 
-  if (process.env.ENABLE_EXAMPLE_UPLOAD === "true") {
+  const { isExampleUploadEnabled } = require("../utils/featureFlags");
+  if (isExampleUploadEnabled()) {
     const exampleUploadRoutes = require("../routes/exampleUploadRoutes");
     app.use("/api/example-upload", exampleUploadRoutes);
   }

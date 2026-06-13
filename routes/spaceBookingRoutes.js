@@ -147,6 +147,7 @@ router.get("/requests/sent", protect, requireRole("shipper"), async (req, res) =
             r.message, r.status, r.created_at AS "createdAt",
             r.load_id AS "loadId", ld.code AS "loadCode",
             l.origin, l.destination, l.carrier_id AS "carrierId",
+            l.rate_per_kg AS "ratePerKg", l.available_from AS "availableFrom",
             COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName"
      FROM carrier_space_requests r
      JOIN carrier_space_listings l ON l.id = r.listing_id

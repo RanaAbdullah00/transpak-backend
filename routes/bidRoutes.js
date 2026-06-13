@@ -64,9 +64,12 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(
       `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
               b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
               b.created_at AS "createdAt",
-              NULL::text AS "carrierName",
-              'Truck' AS "vehicleType"
+              COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
+              us.profile_image AS "shipperAvatar",
+              l.vehicle_type AS "vehicleType"
        FROM bids b
+       JOIN loads l ON l.id = b.load_id
+       LEFT JOIN users us ON us.id = l.shipper_id
        WHERE b.carrier_id = $1
          AND ${COMMERCIAL_BID_VISIBLE_SQL}
        ORDER BY b.created_at DESC
@@ -84,7 +87,8 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(
               b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
               b.created_at AS "createdAt",
               COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName",
-              'Truck' AS "vehicleType"
+              u.profile_image AS "carrierAvatar",
+              l.vehicle_type AS "vehicleType"
        FROM bids b
        JOIN loads l ON l.id = b.load_id
        JOIN users u ON u.id = b.carrier_id
@@ -108,10 +112,12 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
     `SELECT b.id, b.load_id AS "loadId", l.code AS "loadCode", b.carrier_id AS "carrierId", b.amount,
             b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
             b.created_at AS "createdAt",
-            NULL::text AS "carrierName",
-            'Truck' AS "vehicleType"
+            COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
+            us.profile_image AS "shipperAvatar",
+            l.vehicle_type AS "vehicleType"
      FROM bids b
      JOIN loads l ON l.id = b.load_id
+     LEFT JOIN users us ON us.id = l.shipper_id
      WHERE b.carrier_id = $1 AND l.shipper_id <> b.carrier_id
        AND ${COMMERCIAL_BID_VISIBLE_SQL}
      ORDER BY b.created_at DESC

@@ -37,3 +37,5 @@ services:
         value: "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173"
       - key: PG_CONNECTION_TIMEOUT_MS
         value: "30000"
+      - key: ALLOW_VEHICLE_TYPE_MISMATCH
+        value: "true"

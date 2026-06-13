@@ -1,6 +1,7 @@
 const { query } = require("../db/pool");
 const { buildDedupeKey, newEventId, emitDispatchEvent, DISPATCH_TYPES } = require("./realtimeDispatch");
 const { resolveEventType } = require("./eventContractRegistry");
+const { roleNotifyGuard } = require("./roleNotifyGuard");
 
 const MAX_CARRIER_BROADCAST = Number(process.env.LOAD_NOTIFY_CARRIER_LIMIT || 250);
 const SOCKET_FLUSH_MS = Number(process.env.NOTIFY_SOCKET_FLUSH_MS || 400);
@@ -146,6 +147,24 @@ async function insertNotification({ receiverId, senderId, roleType, title, messa
 
 async function notifyUser({ receiverId, senderId, roleType, title, message, type, idempotencyKey }) {
   if (!receiverId || !title || !message) return null;
+
+  try {
+    const roleCheck = await roleNotifyGuard(receiverId, roleType);
+    if (!roleCheck.ok) {
+      // eslint-disable-next-line no-console
+      console.warn("[notify] skipped — role mismatch", {
+        receiverId,
+        roleType,
+        reason: roleCheck.reason
+      });
+      return null;
+    }
+  } catch (guardErr) {
+    // eslint-disable-next-line no-console
+    console.warn("[notify] role guard error — skipped", guardErr?.message || guardErr);
+    return null;
+  }
+
   const eventType = resolveEventType(type || title);
   const dedupeKey = idempotencyKey || dedupeKeyFromContent(receiverId, title, message);
   const now = Date.now();

@@ -5,7 +5,9 @@ const {
   normalizeVehicleType,
   loadIsBiddingEligible,
   validateBidPlacement,
-  validateCounterBid
+  validateCounterBid,
+  buildCarrierMatchSql,
+  shouldFilterLoadsByVehicle
 } = require("../utils/matchingEngine");
 const { BID } = require("../utils/bidStateMachine");
 
@@ -38,6 +40,51 @@ describe("matching engine — fleet rules", () => {
       { vehicle_type: "container", weight: 20 }
     );
     assert.equal(r.ok, true);
+  });
+
+  it("warns but allows mismatch when ALLOW_VEHICLE_TYPE_MISMATCH=true", () => {
+    const prev = process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+    process.env.ALLOW_VEHICLE_TYPE_MISMATCH = "true";
+    try {
+      const r = fleetMatchesLoad(
+        { truckTypes: ["Mazda"], maxCapacityTons: 10, truckCount: 1 },
+        { vehicle_type: "Reefer", weight: 5 }
+      );
+      assert.equal(r.ok, true);
+      assert.equal(r.vehicleTypeMismatchWarning, true);
+      assert.equal(r.warningCode, "VEHICLE_TYPE_MISMATCH");
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+      else process.env.ALLOW_VEHICLE_TYPE_MISMATCH = prev;
+    }
+  });
+});
+
+describe("matching engine — vehicle policy", () => {
+  it("shouldFilterLoadsByVehicle is false when flag relaxed", () => {
+    const prev = process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+    process.env.ALLOW_VEHICLE_TYPE_MISMATCH = "true";
+    try {
+      assert.equal(shouldFilterLoadsByVehicle(), false);
+      const sql = buildCarrierMatchSql({ truckTypes: ["Truck"], maxCapacityTons: 10 }, 1);
+      assert.equal(sql.clauses.some((c) => c.includes("vehicle_type")), false);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+      else process.env.ALLOW_VEHICLE_TYPE_MISMATCH = prev;
+    }
+  });
+
+  it("shouldFilterLoadsByVehicle is true when flag strict", () => {
+    const prev = process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+    delete process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+    try {
+      assert.equal(shouldFilterLoadsByVehicle(), true);
+      const sql = buildCarrierMatchSql({ truckTypes: ["Truck"], maxCapacityTons: 10 }, 1);
+      assert.equal(sql.clauses.some((c) => c.includes("vehicle_type")), true);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_VEHICLE_TYPE_MISMATCH;
+      else process.env.ALLOW_VEHICLE_TYPE_MISMATCH = prev;
+    }
   });
 });
 

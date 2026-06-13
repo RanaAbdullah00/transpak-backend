@@ -283,7 +283,8 @@ router.get(
     const { rows } = await query(
       `SELECT r.id, r.score AS rating, r.comment, r.created_at AS "createdAt",
               r.from_user_id AS "fromUserId",
-              COALESCE(u.full_name, u.email, 'User') AS "fromName"
+              COALESCE(u.full_name, u.email, 'User') AS "fromName",
+              u.profile_image AS "fromAvatar"
        FROM ratings r
        LEFT JOIN users u ON u.id = r.from_user_id
        WHERE r.to_user_id = $1
