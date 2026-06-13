@@ -3,6 +3,7 @@
  * Vehicle type, capacity, route/pickup window, fleet availability, bidding expiry.
  */
 const { OPEN_BIDDING_ELIGIBLE_SQL } = require("./loadExpiry");
+const { isVehicleTypeMismatchRelaxed } = require("./featureFlags");
 const { isBiddingOpen } = require("./loadDeadline");
 const { getCarrierFleetProfile } = require("./loadMatching");
 const { BID, normalizeBidStatus } = require("./bidStateMachine");
@@ -33,6 +34,18 @@ function fleetMatchesLoad(fleet, load) {
   if (requiredType) {
     const types = (fleet.truckTypes || []).map(normalizeVehicleType).filter(Boolean);
     if (!types.length || !types.includes(requiredType)) {
+      if (isVehicleTypeMismatchRelaxed()) {
+        // eslint-disable-next-line no-console
+        console.warn("[matching] VEHICLE_TYPE_MISMATCH relaxed — bid allowed", {
+          requiredType,
+          fleetTypes: types
+        });
+        return {
+          ok: true,
+          vehicleTypeMismatchWarning: true,
+          warningCode: "VEHICLE_TYPE_MISMATCH"
+        };
+      }
       return {
         ok: false,
         status: 409,
@@ -77,7 +90,7 @@ function buildCarrierMatchSql(fleet, startIndex) {
   let i = startIndex;
 
   const types = [...new Set((fleet?.truckTypes || []).map((t) => normalizeVehicleType(t)).filter(Boolean))];
-  if (types.length) {
+  if (types.length && !isVehicleTypeMismatchRelaxed()) {
     params.push(types);
     clauses.push(`lower(trim(l.vehicle_type)) = ANY($${i++}::text[])`);
   }

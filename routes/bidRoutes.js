@@ -169,9 +169,14 @@ router.post(
     if (!placement.ok) {
       return sendError(res, placement.status, placement.message, null, placement.code);
     }
+    const vehicleTypeMismatchWarning = Boolean(placement.vehicleTypeMismatchWarning);
 
     if (existing[0] && isAwaitingShipper(existing[0].status) && Number(existing[0].amount) === Number(amount)) {
-      const bid = { ...existing[0], flowStatus: apiBidStatus(existing[0].status) };
+      const bid = {
+        ...existing[0],
+        flowStatus: apiBidStatus(existing[0].status),
+        vehicleTypeMismatchWarning
+      };
       return sendSuccess(res, 200, bid, "Already submitted");
     }
 
@@ -194,7 +199,11 @@ router.post(
         [loadId, req.auth.userId]
       );
       if (again[0]) {
-        const bid = { ...again[0], flowStatus: apiBidStatus(again[0].status) };
+        const bid = {
+          ...again[0],
+          flowStatus: apiBidStatus(again[0].status),
+          vehicleTypeMismatchWarning
+        };
         return sendSuccess(res, 200, bid, "Already submitted");
       }
       return sendError(res, 409, "Active bid already exists on this load", null, "ACTIVE_BID_EXISTS");
@@ -236,7 +245,11 @@ router.post(
       idempotencyKey: buildDedupeKey(["ADMIN", "BID_CREATED", rows[0].id])
     });
 
-    const bid = { ...rows[0], flowStatus: apiBidStatus(rows[0].status) };
+    const bid = {
+      ...rows[0],
+      flowStatus: apiBidStatus(rows[0].status),
+      vehicleTypeMismatchWarning
+    };
     return sendSuccess(res, 201, bid, "Created");
     } catch (err) {
       if (err.code === "COUNTER_LIMIT_REACHED") {

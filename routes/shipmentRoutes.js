@@ -120,40 +120,115 @@ async function getShipmentHistory(shipmentId) {
   }));
 }
 
+/** Safe user id for shipment list queries — never throws. */
+function resolveShipmentsUserId(req) {
+  const raw = req?.auth?.userId ?? req?.user?.id ?? null;
+  if (raw == null) return null;
+  const uid = String(raw).trim();
+  return uid || null;
+}
+
+/** Non-throwing empty fallback for GET /shipments/active (keeps dashboards alive). */
+function sendActiveShipmentsFallback(res, message = "No active shipments found") {
+  return sendSuccess(res, 200, [], message);
+}
+
+const ACTIVE_SHIPMENT_SELECT = `
+  SELECT l.id, l.code, l.cargo, l.origin, l.destination,
+         l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
+         l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
+         s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
+         CASE
+           WHEN l.booking_reference IS NOT NULL AND l.booking_reference LIKE 'space:%'
+           THEN 'CAPACITY'
+           ELSE 'BID'
+         END AS "flowType",
+         CASE
+           WHEN s.status NOT IN ('delivered', 'closed')
+           THEN true
+           ELSE false
+         END AS "trackingEnabled"
+  FROM shipments s
+  JOIN loads l ON l.id = s.load_id
+  WHERE s.status NOT IN ('delivered', 'closed')
+    AND (
+      l.status = 'booked'
+      OR l.assigned_carrier_id IS NOT NULL
+    )
+    AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
+  ORDER BY s.updated_at DESC
+  LIMIT 50`;
+
+const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
+  SELECT l.id, l.code, l.cargo, l.origin, l.destination,
+         l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
+         l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
+         s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
+         'BID' AS "flowType",
+         CASE
+           WHEN s.status NOT IN ('delivered', 'closed')
+           THEN true
+           ELSE false
+         END AS "trackingEnabled"
+  FROM shipments s
+  JOIN loads l ON l.id = s.load_id
+  WHERE s.status NOT IN ('delivered', 'closed')
+    AND (
+      l.status = 'booked'
+      OR l.assigned_carrier_id IS NOT NULL
+    )
+    AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
+  ORDER BY s.updated_at DESC
+  LIMIT 50`;
+
+async function queryActiveShipmentsForUser(uid) {
+  try {
+    const result = await query(ACTIVE_SHIPMENT_SELECT, [uid]);
+    return Array.isArray(result?.rows) ? result.rows : [];
+  } catch (dbErr) {
+    const msg = String(dbErr?.message || "");
+    if (/booking_reference|column .* does not exist/i.test(msg)) {
+      const result = await query(ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF, [uid]);
+      return Array.isArray(result?.rows) ? result.rows : [];
+    }
+    throw dbErr;
+  }
+}
+
 router.get(
   "/active",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
   async (req, res) => {
     try {
-      const uid = req.auth.userId;
-      const { rows } = await query(
-        `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
-                l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
-                l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
-                s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
-                CASE
-                  WHEN l.booking_reference IS NOT NULL AND l.booking_reference LIKE 'space:%'
-                  THEN 'CAPACITY'
-                  ELSE 'BID'
-                END AS "flowType",
-                CASE
-                  WHEN s.status NOT IN ('delivered', 'closed', 'completed')
-                  THEN true
-                  ELSE false
-                END AS "trackingEnabled"
-         FROM shipments s
-         JOIN loads l ON l.id = s.load_id
-         WHERE s.status NOT IN ('delivered', 'closed', 'completed')
-           AND l.status = 'booked'
-           AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
-         ORDER BY s.updated_at DESC
-         LIMIT 50`,
-        [uid]
-      );
-      return sendSuccess(res, 200, rows);
+      const uid = resolveShipmentsUserId(req);
+      if (!uid) {
+        return sendActiveShipmentsFallback(res);
+      }
+
+      let rows = [];
+      try {
+        rows = await queryActiveShipmentsForUser(uid);
+      } catch (dbErr) {
+        // eslint-disable-next-line no-console
+        console.warn("[shipments/active] query failed", {
+          userId: uid,
+          message: dbErr?.message || "unknown",
+          code: dbErr?.code || null
+        });
+        return sendActiveShipmentsFallback(res);
+      }
+
+      const safeRows = rows.filter((row) => row && typeof row === "object");
+      if (!safeRows.length) {
+        return sendActiveShipmentsFallback(res);
+      }
+
+      return sendSuccess(res, 200, safeRows);
     } catch (err) {
-      return sendError(res, 500, err.message || "Server error");
+      // eslint-disable-next-line no-console
+      console.warn("[shipments/active] handler error", err?.message || "unknown");
+      return sendActiveShipmentsFallback(res);
     }
   }
 );

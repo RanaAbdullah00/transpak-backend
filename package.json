@@ -26,7 +26,6 @@
     "test:performance": "node --test test/performance.safety.test.js",
     "test:safety": "node --test test/*.test.js",
     "seed": "node scripts/seedUsers.js",
-    "seed:demo-admin": "node scripts/seedDemoAdmin.js",
     "seed:phase1-rbac": "node scripts/seedPhase1RbacUsers.js",
     "check:login": "node scripts/runtime-login-check.js",
     "check:schema": "node scripts/qa-schema-check.js",

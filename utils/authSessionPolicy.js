@@ -1,5 +1,4 @@
 const userRepo = require("../repositories/userRepo");
-const { isDemoAdminEmail } = require("./demoAdmin");
 const { normalizeRole } = require("./roleConstants");
 
 function isAdminAccount(user) {
@@ -23,7 +22,7 @@ function normalizeRolesAndActiveRole(user) {
 /** Login workspace: admin always admin; commercial users must match roleHint when provided. */
 function resolveLoginActiveRole(user, email, roleHint) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
-  if (isDemoAdminEmail(normalizedEmail) || isAdminAccount(user)) {
+  if (isAdminAccount(user)) {
     return "admin";
   }
   const normalized = normalizeRolesAndActiveRole(user);

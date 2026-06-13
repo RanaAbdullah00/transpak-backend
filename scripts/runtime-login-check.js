@@ -1,6 +1,6 @@
 /**
- * Quick local check: DB + demo admin login path (no HTTP server).
- * Usage: node scripts/runtime-login-check.js
+ * Quick local check: DB + admin login path (no HTTP server).
+ * Usage: CHECK_LOGIN_EMAIL=... CHECK_LOGIN_PASSWORD=... node scripts/runtime-login-check.js
  */
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
@@ -9,10 +9,14 @@ const bcrypt = require("bcrypt");
 const { query, endPool } = require("../db/pool");
 const { signToken } = require("../utils/jwt");
 
-const EMAIL = "mrrajpoot.327@gmail.com";
-const PASSWORD = "11223344";
+const EMAIL = String(process.env.CHECK_LOGIN_EMAIL || process.env.DEV_ADMIN_EMAIL || "").trim();
+const PASSWORD = String(process.env.CHECK_LOGIN_PASSWORD || process.env.DEV_ADMIN_PASSWORD || "").trim();
 
 async function main() {
+  if (!EMAIL || !PASSWORD) {
+    console.error("[check] Set CHECK_LOGIN_EMAIL/CHECK_LOGIN_PASSWORD or DEV_ADMIN_EMAIL/DEV_ADMIN_PASSWORD");
+    process.exit(1);
+  }
   await query("SELECT 1");
   console.log("[check] db ping ok");
 
@@ -28,7 +32,7 @@ async function main() {
   }
   const ok = await bcrypt.compare(PASSWORD, row.password_hash);
   if (!ok) {
-    console.error("[check] password mismatch — run seed:demo-admin or set TRANSPAK_DEMO_ADMIN_PASSWORD");
+    console.error("[check] password mismatch — verify CHECK_LOGIN_PASSWORD / DEV_ADMIN_PASSWORD");
     process.exit(1);
   }
   const token = signToken({

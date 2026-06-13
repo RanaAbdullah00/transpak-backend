@@ -2,7 +2,6 @@ const { verifyToken } = require("../utils/jwt");
 const { sendError } = require("../utils/apiResponse");
 const { recordAuthFailure } = require("../utils/opsTelemetry");
 const userRepo = require("../repositories/userRepo");
-const { isDemoAdminEmail } = require("../utils/demoAdmin");
 const { buildAuthContextFromDB, logAuthContext } = require("../utils/authContext");
 
 /** Valid JWT identity → load permissions from DB only. */
@@ -40,8 +39,7 @@ async function requireAuth(req, res, next) {
     if (user.blocked) {
       return sendError(res, 403, "Account is blocked");
     }
-    const emailLc = String(user.email || "").trim().toLowerCase();
-    if (!user.verified && !isDemoAdminEmail(emailLc)) {
+    if (!user.verified) {
       return sendError(res, 403, "Please verify your email before using the app.", null, "EMAIL_NOT_VERIFIED");
     }
 

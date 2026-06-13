@@ -6,10 +6,14 @@ require("dotenv").config();
 const axios = require("axios");
 
 const BASE = (process.argv[2] || "http://127.0.0.1:10000").replace(/\/$/, "");
-const EMAIL = process.env.TRANSPAK_DEMO_ADMIN_EMAIL || "mrrajpoot.327@gmail.com";
-const PASS = process.env.TRANSPAK_DEMO_ADMIN_PASSWORD || "11223344";
+const EMAIL = String(process.env.CHECK_LOGIN_EMAIL || process.env.DEV_ADMIN_EMAIL || "").trim();
+const PASS = String(process.env.CHECK_LOGIN_PASSWORD || process.env.DEV_ADMIN_PASSWORD || "").trim();
 
 async function main() {
+  if (!EMAIL || !PASS) {
+    console.error("[ors] Set CHECK_LOGIN_EMAIL/CHECK_LOGIN_PASSWORD or DEV_ADMIN_EMAIL/DEV_ADMIN_PASSWORD");
+    process.exit(1);
+  }
   const login = await axios.post(`${BASE}/api/auth/login`, {
     email: EMAIL,
     password: PASS,

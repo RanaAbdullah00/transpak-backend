@@ -109,53 +109,6 @@ async function seedAdminIfNeeded() {
   }
 }
 
-const { isDemoAdminEnabled, getDemoAdminEmail } = require("../utils/demoAdmin");
-
-async function ensureTranspakDemoAdmin() {
-  if (!isDemoAdminEnabled()) return;
-
-  const bcrypt = require("bcrypt");
-  const userRepo = require("../repositories/userRepo");
-  const email = getDemoAdminEmail();
-  if (!email) return;
-
-  const password = String(process.env.TRANSPAK_DEMO_ADMIN_PASSWORD || "").trim();
-  if (!password) {
-    console.warn("[demo] TRANSPAK_DEMO_ADMIN_PASSWORD not set — skipping demo admin seed");
-    return;
-  }
-
-  const phone = String(process.env.TRANSPAK_DEMO_ADMIN_PHONE || "+923001234568").trim();
-  const cnic = String(process.env.TRANSPAK_DEMO_ADMIN_CNIC || "35202-DEMO327-1").trim();
-  const fullName = String(process.env.TRANSPAK_DEMO_ADMIN_NAME || "Demo Admin").trim();
-
-  try {
-    const passwordHash = await bcrypt.hash(password, 10);
-    await userRepo.upsertDemoAdmin({
-      email,
-      passwordHash,
-      roles: ["admin"],
-      activeRole: "admin",
-      phone,
-      cnicNumber: cnic,
-      fullName
-    });
-    await userRepo.updatePasswordHashByEmail(email, passwordHash);
-    await userRepo.setVerifiedByEmail(email, true);
-    await query(
-      `UPDATE users
-          SET is_profile_complete = true,
-              active_role = 'admin',
-              updated_at = now()
-        WHERE lower(trim(email)) = lower(trim($1))`,
-      [email]
-    );
-    console.log("[demo] demo admin ensured:", email);
-  } catch (err) {
-    console.error("TransPak: ensureTranspakDemoAdmin failed:", err.message || err);
-  }
-}
-
 function formatDbError(err) {
   const code = err && err.code ? String(err.code) : "UNKNOWN";
   const msg = err && err.message ? String(err.message) : String(err);
@@ -189,7 +142,6 @@ async function start() {
       await connectDB(dbState);
       if (dbState.ready) {
         await seedAdminIfNeeded();
-        await ensureTranspakDemoAdmin();
       } else if (!dbNotReadyLogged) {
         dbNotReadyLogged = true;
         // eslint-disable-next-line no-console

@@ -25,7 +25,6 @@ const RBAC_PASSWORD = String(
   process.env.PHASE1_RBAC_PASSWORD ||
     process.env.E2E_SHIPPER_PASSWORD ||
     process.env.E2E_ADMIN_PASSWORD ||
-    process.env.TRANSPAK_DEMO_ADMIN_PASSWORD ||
     ""
 ).trim();
 

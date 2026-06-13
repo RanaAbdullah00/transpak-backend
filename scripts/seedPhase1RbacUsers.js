@@ -112,11 +112,10 @@ async function main() {
   const password = String(
     process.env.PHASE1_RBAC_PASSWORD ||
       process.env.E2E_SHIPPER_PASSWORD ||
-      process.env.TRANSPAK_DEMO_ADMIN_PASSWORD ||
       ""
   ).trim();
   if (!password) {
-    console.error("Set PHASE1_RBAC_PASSWORD (or TRANSPAK_DEMO_ADMIN_PASSWORD)");
+    console.error("Set PHASE1_RBAC_PASSWORD (or E2E_SHIPPER_PASSWORD)");
     process.exit(1);
   }
 
