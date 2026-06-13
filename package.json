@@ -36,6 +36,7 @@
     "db:migrate": "node scripts/run-migrations.js",
     "db:ensure-notifications": "node scripts/ensureNotificationSchema.js",
     "db:ensure-capacity-bridge": "node scripts/ensureCapacityBridgeSchema.js",
+    "db:ensure-availability-slots": "node scripts/ensureAvailabilitySlotsSchema.js",
     "db:debug-schema": "node scripts/debug-schema-state.js",
     "verify:production": "node scripts/verify-production-alignment.mjs",
     "audit:production-db": "node scripts/production-db-audit.mjs",
