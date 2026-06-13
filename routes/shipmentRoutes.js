@@ -137,6 +137,10 @@ const ACTIVE_SHIPMENT_SELECT = `
   SELECT l.id, l.code, l.cargo, l.origin, l.destination,
          l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
          l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
+         COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
+         COALESCE(uc.full_name, uc.email, 'Carrier') AS "carrierName",
+         us.profile_image AS "shipperAvatar",
+         uc.profile_image AS "carrierAvatar",
          s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
          CASE
            WHEN l.booking_reference IS NOT NULL AND l.booking_reference LIKE 'space:%'
@@ -150,6 +154,8 @@ const ACTIVE_SHIPMENT_SELECT = `
          END AS "trackingEnabled"
   FROM shipments s
   JOIN loads l ON l.id = s.load_id
+  LEFT JOIN users us ON us.id = l.shipper_id
+  LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
   WHERE s.status NOT IN ('delivered', 'closed')
     AND (
       l.status = 'booked'
@@ -163,6 +169,10 @@ const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
   SELECT l.id, l.code, l.cargo, l.origin, l.destination,
          l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
          l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
+         COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
+         COALESCE(uc.full_name, uc.email, 'Carrier') AS "carrierName",
+         us.profile_image AS "shipperAvatar",
+         uc.profile_image AS "carrierAvatar",
          s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
          'BID' AS "flowType",
          CASE
@@ -172,6 +182,8 @@ const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
          END AS "trackingEnabled"
   FROM shipments s
   JOIN loads l ON l.id = s.load_id
+  LEFT JOIN users us ON us.id = l.shipper_id
+  LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
   WHERE s.status NOT IN ('delivered', 'closed')
     AND (
       l.status = 'booked'
@@ -243,9 +255,16 @@ router.get(
       const { rows } = await query(
         `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
                 l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
+                l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
+                COALESCE(uc.full_name, uc.email, 'Carrier') AS "carrierName",
+                COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
+                uc.profile_image AS "carrierAvatar",
+                us.profile_image AS "shipperAvatar",
                 s.status AS "shipmentStatus", s.updated_at AS "completedAt"
          FROM shipments s
          JOIN loads l ON l.id = s.load_id
+         LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
+         LEFT JOIN users us ON us.id = l.shipper_id
          WHERE s.status IN ('delivered', 'closed')
            AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
          ORDER BY s.updated_at DESC

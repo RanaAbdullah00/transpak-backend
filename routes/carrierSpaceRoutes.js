@@ -13,6 +13,7 @@ const {
   FORBIDDEN_CODES
 } = require("../utils/resourceAuth");
 const { closeExpiredCapacityListings } = require("../utils/capacityListingLifecycle");
+const { validateAvailabilitySlots } = require("../utils/availabilitySlots");
 
 const router = express.Router();
 
@@ -68,7 +69,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
     `SELECT s.id, s.carrier_id AS "carrierId", s.origin, s.destination,
             s.truck_capacity_kg AS "truckCapacityKg", s.remaining_space_kg AS "remainingSpaceKg",
             s.vehicle_type AS "vehicleType", s.rate_per_kg AS "ratePerKg",
-            s.available_from AS "availableFrom", s.notes, s.status,
+            s.available_from AS "availableFrom", s.availability_slots AS "availabilitySlots", s.notes, s.status,
             s.created_at AS "createdAt",
             COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName"
      FROM carrier_space_listings s
@@ -86,7 +87,7 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
     `SELECT id, carrier_id AS "carrierId", origin, destination,
             truck_capacity_kg AS "truckCapacityKg", remaining_space_kg AS "remainingSpaceKg",
             vehicle_type AS "vehicleType", rate_per_kg AS "ratePerKg",
-            available_from AS "availableFrom", notes, status,
+            available_from AS "availableFrom", availability_slots AS "availabilitySlots", notes, status,
             created_at AS "createdAt", updated_at AS "updatedAt",
             (SELECT COUNT(*)::int FROM carrier_space_requests r
              WHERE r.listing_id = carrier_space_listings.id
@@ -111,6 +112,7 @@ const createValidators = [
   body("vehicleType").optional().trim().isLength({ min: 2, max: 80 }),
   body("ratePerKg").optional({ nullable: true }).toFloat().isFloat({ min: 0 }),
   body("availableFrom").optional({ nullable: true }).isISO8601().toDate(),
+  body("availabilitySlots").optional({ nullable: true }).isArray({ max: 12 }),
   body("notes").optional().trim().isLength({ max: 500 })
 ];
 
@@ -133,19 +135,23 @@ router.post(
       vehicleType,
       ratePerKg,
       availableFrom,
+      availabilitySlots,
       notes
     } = req.body || {};
+    const slotCheck = validateAvailabilitySlots(availabilitySlots);
+    if (!slotCheck.ok) return sendError(res, 400, slotCheck.message, null, "INVALID_SLOTS");
     const cap = Number(truckCapacityKg);
     const rem = Number(remainingSpaceKg);
     if (rem > cap) return sendError(res, 400, "Remaining space cannot exceed truck capacity");
 
     const { rows } = await dbQuery(
       `INSERT INTO carrier_space_listings
-         (carrier_id, origin, destination, truck_capacity_kg, remaining_space_kg, vehicle_type, rate_per_kg, available_from, notes, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9,'open')
+         (carrier_id, origin, destination, truck_capacity_kg, remaining_space_kg, vehicle_type, rate_per_kg, available_from, availability_slots, notes, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9::jsonb,$10,'open')
        RETURNING id, origin, destination, truck_capacity_kg AS "truckCapacityKg",
                  remaining_space_kg AS "remainingSpaceKg", vehicle_type AS "vehicleType",
-                 rate_per_kg AS "ratePerKg", available_from AS "availableFrom", notes, status,
+                 rate_per_kg AS "ratePerKg", available_from AS "availableFrom",
+                 availability_slots AS "availabilitySlots", notes, status,
                  created_at AS "createdAt"`,
       [
         req.auth.userId,
@@ -156,6 +162,7 @@ router.post(
         String(vehicleType || "Truck").trim(),
         ratePerKg != null ? Number(ratePerKg) : null,
         availableFrom ? new Date(availableFrom).toISOString().slice(0, 10) : null,
+        slotCheck.value ? JSON.stringify(slotCheck.value) : null,
         notes ? String(notes).trim() : null
       ]
     );
@@ -194,6 +201,7 @@ router.patch(
     body("vehicleType").optional().trim().isLength({ min: 2, max: 80 }),
     body("ratePerKg").optional({ nullable: true }).toFloat().isFloat({ min: 0 }),
     body("availableFrom").optional({ nullable: true }).isISO8601().toDate(),
+    body("availabilitySlots").optional({ nullable: true }).isArray({ max: 12 }),
     body("notes").optional().trim().isLength({ max: 500 }),
     body("status").optional().isIn(["open", "booked", "closed"])
   ],
@@ -215,6 +223,7 @@ router.patch(
       req.body.vehicleType != null ||
       req.body.ratePerKg !== undefined ||
       req.body.availableFrom !== undefined ||
+      req.body.availabilitySlots !== undefined ||
       req.body.notes !== undefined;
 
     if (row.status === "closed" && status && status !== "closed") {
@@ -267,6 +276,13 @@ router.patch(
           ? new Date(req.body.availableFrom).toISOString().slice(0, 10)
           : undefined;
 
+    let availabilitySlotsValue = undefined;
+    if (req.body.availabilitySlots !== undefined) {
+      const slotCheck = validateAvailabilitySlots(req.body.availabilitySlots);
+      if (!slotCheck.ok) return sendError(res, 400, slotCheck.message, null, "INVALID_SLOTS");
+      availabilitySlotsValue = slotCheck.value;
+    }
+
     const rateSent = req.body.ratePerKg !== undefined;
     const rateValue = rateSent ? (req.body.ratePerKg == null ? null : Number(req.body.ratePerKg)) : null;
 
@@ -279,13 +295,15 @@ router.patch(
            vehicle_type = COALESCE($6, vehicle_type),
            rate_per_kg = CASE WHEN $7 THEN $8 ELSE rate_per_kg END,
            available_from = CASE WHEN $9::text = '__skip__' THEN available_from WHEN $9 IS NULL THEN NULL ELSE $9::date END,
-           notes = CASE WHEN $10::text IS NOT NULL THEN $10 ELSE notes END,
-           status = COALESCE($11, status),
+           availability_slots = CASE WHEN $10::text = '__skip__' THEN availability_slots WHEN $10 IS NULL THEN NULL ELSE $10::jsonb END,
+           notes = CASE WHEN $11::text IS NOT NULL THEN $11 ELSE notes END,
+           status = COALESCE($12, status),
            updated_at = now()
        WHERE id = $1
        RETURNING id, origin, destination, truck_capacity_kg AS "truckCapacityKg",
                  remaining_space_kg AS "remainingSpaceKg", vehicle_type AS "vehicleType",
-                 rate_per_kg AS "ratePerKg", available_from AS "availableFrom", notes, status,
+                 rate_per_kg AS "ratePerKg", available_from AS "availableFrom",
+                 availability_slots AS "availabilitySlots", notes, status,
                  updated_at AS "updatedAt"`,
       [
         id,
@@ -297,6 +315,11 @@ router.patch(
         rateSent,
         rateValue,
         availableFrom === undefined ? "__skip__" : availableFrom,
+        availabilitySlotsValue === undefined
+          ? "__skip__"
+          : availabilitySlotsValue
+            ? JSON.stringify(availabilitySlotsValue)
+            : null,
         req.body.notes !== undefined ? (req.body.notes ? String(req.body.notes).trim() : null) : null,
         status
       ]
