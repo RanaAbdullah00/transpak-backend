@@ -133,4 +133,23 @@ describe("Phase 2 — shipment timeline merge", () => {
     const src = read("routes/reviewRoutes.js");
     assert.ok(src.includes('"toUserAvatar"'));
   });
+
+  it("reviews summary batch exposes lastReviewAt", () => {
+    const src = read("routes/reviewRoutes.js");
+    assert.ok(src.includes('router.get("/summary"'));
+    assert.ok(src.includes('"lastReviewAt"'));
+    assert.ok(src.includes("MAX(created_at)"));
+  });
+
+  it("list parents batch rating summaries at list level", () => {
+    assert.ok(readFe("components/reviews/UserRatingBadge.jsx").includes("ratingMap"));
+    assert.ok(!readFe("components/reviews/UserRatingBadge.jsx").includes("useReceivedRatingSummary"));
+    assert.ok(readFe("hooks/useRatingSummaryBatch.js").includes("/reviews/summary"));
+    assert.ok(readFe("components/loadboard/BidList.jsx").includes("useRatingSummaryBatch"));
+  });
+
+  it("tracking coordinator batches socket updates", () => {
+    assert.ok(readFe("hooks/useTrackingCoordinator.js").includes("scheduleBufferedUpdate"));
+    assert.ok(readFe("hooks/useShipmentTracking.js").includes("useTrackingCoordinator"));
+  });
 });

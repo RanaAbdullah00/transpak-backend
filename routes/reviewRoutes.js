@@ -287,7 +287,8 @@ router.get("/summary", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
     const { rows } = await query(
       `SELECT to_user_id AS "userId",
               COALESCE(AVG(score), 0)::numeric(10,2) AS "ratingAverage",
-              COUNT(*)::int AS "ratingCount"
+              COUNT(*)::int AS "ratingCount",
+              MAX(created_at) AS "lastReviewAt"
        FROM ratings
        WHERE to_user_id = ANY($1::uuid[])
        GROUP BY to_user_id`,
@@ -295,12 +296,13 @@ router.get("/summary", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
     );
     const out = {};
     for (const id of ids) {
-      out[id] = { ratingAverage: 0, ratingCount: 0 };
+      out[id] = { ratingAverage: 0, ratingCount: 0, lastReviewAt: null };
     }
     for (const row of rows) {
       out[row.userId] = {
         ratingAverage: Number(row.ratingAverage || 0),
-        ratingCount: Number(row.ratingCount || 0)
+        ratingCount: Number(row.ratingCount || 0),
+        lastReviewAt: row.lastReviewAt || null
       };
     }
     return sendSuccess(res, 200, out);
