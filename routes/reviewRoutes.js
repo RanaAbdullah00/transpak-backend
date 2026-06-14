@@ -275,6 +275,40 @@ router.post(
   }
 );
 
+router.get("/summary", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, res) => {
+  try {
+    const raw = String(req.query?.userIds || req.query?.userId || "").trim();
+    const ids = raw
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => isUuid(v))
+      .slice(0, 50);
+    if (!ids.length) return sendSuccess(res, 200, {});
+    const { rows } = await query(
+      `SELECT to_user_id AS "userId",
+              COALESCE(AVG(score), 0)::numeric(10,2) AS "ratingAverage",
+              COUNT(*)::int AS "ratingCount"
+       FROM ratings
+       WHERE to_user_id = ANY($1::uuid[])
+       GROUP BY to_user_id`,
+      [ids]
+    );
+    const out = {};
+    for (const id of ids) {
+      out[id] = { ratingAverage: 0, ratingCount: 0 };
+    }
+    for (const row of rows) {
+      out[row.userId] = {
+        ratingAverage: Number(row.ratingAverage || 0),
+        ratingCount: Number(row.ratingCount || 0)
+      };
+    }
+    return sendSuccess(res, 200, out);
+  } catch (err) {
+    return sendError(res, 500, err.message || "Server error");
+  }
+});
+
 router.get(
   "/:userId",
   protect,

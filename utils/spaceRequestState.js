@@ -1,6 +1,5 @@
 const ALLOWED = {
-  request_sent: new Set(["accepted", "rejected"]),
-  accepted: new Set(["active", "rejected"]),
+  request_sent: new Set(["active", "rejected"]),
   active: new Set(["in_transit", "completed"]),
   in_transit: new Set(["completed"]),
   completed: new Set(),
@@ -25,8 +24,8 @@ function assertSpaceTransition(from, to) {
   }
 }
 
-/** Operation Center "Request sent" — pending lifecycle only (not active/completed/rejected). */
-const REQUEST_SENT_OPS_STATUSES = ["request_sent", "accepted"];
-const REQUEST_SENT_OPS_SQL = "r.status IN ('request_sent', 'accepted')";
+/** Pending carrier/shipper action — awaiting accept/reject only. */
+const REQUEST_SENT_OPS_STATUSES = ["request_sent"];
+const REQUEST_SENT_OPS_SQL = "r.status = 'request_sent'";
 
 module.exports = { assertSpaceTransition, REQUEST_SENT_OPS_STATUSES, REQUEST_SENT_OPS_SQL };

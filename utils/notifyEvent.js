@@ -10,7 +10,7 @@ const DEDUPE_WINDOW_MS = Number(process.env.NOTIFY_DEDUPE_MS || 120000);
 /** @type {Map<string, { payloads: object[], timer: NodeJS.Timeout|null, roleType: string|null, seen: Set<string> }>} */
 const socketQueues = new Map();
 
-/** In-memory idempotency (per process) */
+/** In-memory idempotency (per process). Not shared across Render instances — duplicate inserts are still blocked by DB dedupe_key. */
 const memoryDedupe = new Map();
 
 function dedupeKeyFromContent(receiverId, title, message) {

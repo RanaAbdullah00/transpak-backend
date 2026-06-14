@@ -5,7 +5,7 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query, getPool } = require("../db/pool");
 const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey } = require("../utils/realtimeDispatch");
-const { assertSpaceTransition } = require("../utils/spaceRequestState");
+const { assertSpaceTransition, REQUEST_SENT_OPS_SQL } = require("../utils/spaceRequestState");
 const { createShipmentFromCapacityAccept } = require("../utils/capacityShipmentBridge");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { writeAudit } = require("../utils/auditLog");
@@ -128,12 +128,13 @@ router.get("/requests/incoming", protect, requireRole("carrier"), async (req, re
             r.load_id AS "loadId", l.code AS "loadCode",
             sl.origin, sl.destination, sl.remaining_space_kg AS "remainingSpaceKg",
             sl.rate_per_kg AS "ratePerKg", sl.available_from AS "availableFrom", sl.notes AS "listingNotes",
-            COALESCE(u.full_name, u.email, 'Shipper') AS "shipperName"
+            COALESCE(u.full_name, u.email, 'Shipper') AS "shipperName",
+            u.profile_image AS "shipperAvatar"
      FROM carrier_space_requests r
      JOIN carrier_space_listings sl ON sl.id = r.listing_id
      JOIN users u ON u.id = r.shipper_id
      LEFT JOIN loads l ON l.id = r.load_id
-     WHERE sl.carrier_id = $1 AND r.status IN ('request_sent', 'accepted')
+     WHERE sl.carrier_id = $1 AND ${REQUEST_SENT_OPS_SQL}
      ORDER BY r.created_at DESC
      LIMIT 100`,
     [req.auth.userId]
@@ -148,12 +149,13 @@ router.get("/requests/sent", protect, requireRole("shipper"), async (req, res) =
             r.load_id AS "loadId", ld.code AS "loadCode",
             l.origin, l.destination, l.carrier_id AS "carrierId",
             l.rate_per_kg AS "ratePerKg", l.available_from AS "availableFrom",
-            COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName"
+            COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName",
+            u.profile_image AS "carrierAvatar"
      FROM carrier_space_requests r
      JOIN carrier_space_listings l ON l.id = r.listing_id
      JOIN users u ON u.id = l.carrier_id
      LEFT JOIN loads ld ON ld.id = r.load_id
-     WHERE r.shipper_id = $1 AND r.status IN ('request_sent', 'accepted')
+     WHERE r.shipper_id = $1 AND ${REQUEST_SENT_OPS_SQL}
      ORDER BY r.created_at DESC
      LIMIT 100`,
     [req.auth.userId]
@@ -193,7 +195,7 @@ async function transitionRequest(req, res, nextStatus) {
 
     assertSpaceTransition(row.status, nextStatus);
 
-    if (nextStatus === "accepted" || nextStatus === "active") {
+    if (nextStatus === "active") {
       const rem = Number(row.remaining_space_kg);
       if (Number(row.requested_kg) > rem) {
         await client.query("ROLLBACK");
@@ -210,7 +212,7 @@ async function transitionRequest(req, res, nextStatus) {
     }
 
     let shipmentBridge = null;
-    if (nextStatus === "accepted" && !row.load_id) {
+    if (nextStatus === "active" && !row.load_id) {
       shipmentBridge = await createShipmentFromCapacityAccept(client, row, {
         carrier_id: row.carrier_id,
         origin: row.origin,
@@ -221,7 +223,7 @@ async function transitionRequest(req, res, nextStatus) {
       });
     }
 
-    const dbStatus = nextStatus === "accepted" ? "active" : nextStatus;
+    const dbStatus = nextStatus;
 
     await client.query(
       `UPDATE carrier_space_requests SET status = $2, updated_at = now() WHERE id = $1`,
@@ -238,8 +240,7 @@ async function transitionRequest(req, res, nextStatus) {
     await client.query("COMMIT");
 
     const notifyMap = {
-      accepted: ["SPACE_ACCEPTED", "Your capacity request was accepted"],
-      active: ["CONTRACT_STARTED", "Capacity contract is now active"],
+      active: ["SPACE_ACCEPTED", "Your capacity request was accepted"],
       rejected: ["SPACE_REJECTED", "Your capacity request was declined"],
       in_transit: ["SPACE_IN_TRANSIT", "Shipment is in transit on shared capacity"],
       completed: ["SPACE_COMPLETED", "Capacity contract completed — leave a review"]
@@ -427,7 +428,7 @@ router.put(
   requireRole("carrier"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  asyncHandler((req, res) => transitionRequest(req, res, "accepted"))
+  asyncHandler((req, res) => transitionRequest(req, res, "active"))
 );
 
 router.put(

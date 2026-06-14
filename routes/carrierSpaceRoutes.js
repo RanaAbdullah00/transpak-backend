@@ -97,7 +97,7 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
             created_at AS "createdAt", updated_at AS "updatedAt",
             (SELECT COUNT(*)::int FROM carrier_space_requests r
              WHERE r.listing_id = carrier_space_listings.id
-               AND r.status IN ('request_sent', 'accepted')) AS "pendingRequestCount",
+               AND r.status = 'request_sent') AS "pendingRequestCount",
             (SELECT COUNT(*)::int FROM carrier_space_requests r
              WHERE r.listing_id = carrier_space_listings.id
                AND r.status IN ('active', 'in_transit', 'completed')) AS "acceptedRequestCount",
