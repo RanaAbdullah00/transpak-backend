@@ -188,8 +188,8 @@ router.get(
       const sinceMs = parseActivitySinceMs(req.query?.since);
       const sinceIso = new Date(Date.now() - sinceMs).toISOString();
       const limit = Math.min(20, Math.max(1, parseInt(req.query?.limit, 10) || 8));
-      const { scope, params: scopeParams } = activityScopeQuery(req.auth, req);
-      const params = [uid, ...scopeParams];
+      const scope = activityScopeQuery(req.auth, req);
+      const params = [uid, ...scope.params];
       params.push(sinceIso);
       const sinceIdx = params.length;
       params.push(limit);
