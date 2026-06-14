@@ -31,7 +31,7 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+router.get("/", protect, requireAnyRole(["shipper", "admin"]), async (req, res) => {
   await closeExpiredCapacityListings();
   const origin = String(req.query?.origin || "").trim();
   const destination = String(req.query?.destination || "").trim();
@@ -95,6 +95,9 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
             vehicle_type AS "vehicleType", rate_per_kg AS "ratePerKg",
             available_from AS "availableFrom", availability_slots AS "availabilitySlots", notes, status,
             created_at AS "createdAt", updated_at AS "updatedAt",
+            (SELECT COUNT(*)::int FROM carrier_space_requests r
+             WHERE r.listing_id = carrier_space_listings.id
+               AND r.status IN ('request_sent', 'accepted')) AS "pendingRequestCount",
             (SELECT COUNT(*)::int FROM carrier_space_requests r
              WHERE r.listing_id = carrier_space_listings.id
                AND r.status IN ('active', 'in_transit', 'completed')) AS "acceptedRequestCount",

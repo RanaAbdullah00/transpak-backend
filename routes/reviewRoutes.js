@@ -37,6 +37,8 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
                 THEN COALESCE(uc.full_name, uc.email, 'Carrier')
                 ELSE COALESCE(us.full_name, us.email, 'Shipper')
               END AS "toUserName",
+              CASE WHEN l.shipper_id = $1 THEN 'carrier' ELSE 'shipper' END AS "toUserRole",
+              CASE WHEN l.shipper_id = $1 THEN uc.profile_image ELSE us.profile_image END AS "toUserAvatar",
               l.origin, l.destination
        FROM shipments s
        JOIN loads l ON l.id = s.load_id
@@ -59,6 +61,8 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
         loadCode: row.loadCode,
         toUserId: row.toUserId,
         toUserName: row.toUserName,
+        toUserRole: row.toUserRole,
+        toUserAvatar: row.toUserAvatar,
         label: `${row.origin || ""} → ${row.destination || ""}`.trim() || row.loadCode
       });
     }
@@ -70,6 +74,8 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
                 THEN COALESCE(uc.full_name, uc.email, 'Carrier')
                 ELSE COALESCE(us.full_name, us.email, 'Shipper')
               END AS "toUserName",
+              CASE WHEN r.shipper_id = $1 THEN 'carrier' ELSE 'shipper' END AS "toUserRole",
+              CASE WHEN r.shipper_id = $1 THEN uc.profile_image ELSE us.profile_image END AS "toUserAvatar",
               l.origin, l.destination
        FROM carrier_space_requests r
        JOIN carrier_space_listings l ON l.id = r.listing_id
@@ -99,6 +105,8 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
         spaceRequestId: row.spaceRequestId,
         toUserId: row.toUserId,
         toUserName: row.toUserName,
+        toUserRole: row.toUserRole,
+        toUserAvatar: row.toUserAvatar,
         label: `${row.origin || ""} → ${row.destination || ""}`.trim()
       });
     }
