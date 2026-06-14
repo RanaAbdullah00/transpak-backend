@@ -263,6 +263,15 @@ async function start() {
         `TransPak backend running - version ${APP_VERSION} - build ${BUILD_ID} - build OK - port ${listenAttemptPort}`
       );
 
+      if (!paasPortLock) {
+        try {
+          const portFile = path.join(__dirname, "..", "..", ".dev-backend-port");
+          fs.writeFileSync(portFile, String(listenAttemptPort), "utf8");
+        } catch {
+          /* non-fatal — discovery falls back to port probe */
+        }
+      }
+
       if (process.env.NODE_ENV === "production" && !realtimeHub.isEngineReady()) {
         console.error("[server] Socket.io not ready after listen — failing deploy health");
         process.exit(1);

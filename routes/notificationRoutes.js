@@ -28,7 +28,12 @@ function validate(req, res, next) {
 }
 
 function scopedQuery(auth, req, paramIndex = 2) {
-  const workspace = resolveNotificationWorkspace(req);
+  const roles = (auth?.roles || []).map((r) => String(r).trim().toLowerCase());
+  const dualCommercial = roles.includes("shipper") && roles.includes("carrier");
+  const includeAll =
+    String(req.query?.includeAllRoles || req.query?.include_all_roles || "") === "1";
+  const workspace =
+    dualCommercial && includeAll ? null : resolveNotificationWorkspace(req);
   const scope = notificationScopeClause(auth, workspace, paramIndex);
   return { scope, scopeParams: scope.params, workspace };
 }

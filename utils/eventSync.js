@@ -11,11 +11,21 @@ function parseSince(raw) {
 /**
  * Reconnect recovery — missed notifications + module freshness + admin audit tail.
  */
+function resolveEventSyncScope(auth, req, paramIndex = 2) {
+  const roles = (auth?.roles || []).map((r) => String(r).trim().toLowerCase());
+  const dualCommercial = roles.includes("shipper") && roles.includes("carrier");
+  const includeAll =
+    String(req.query?.includeAllRoles || req.query?.include_all_roles || "") === "1";
+  const workspace =
+    dualCommercial && includeAll ? null : resolveNotificationWorkspace(req);
+  const scope = notificationScopeClause(auth, workspace, paramIndex);
+  return { scope, scopeParams: scope.params, workspace };
+}
+
 async function buildEventSync(auth, req) {
   const uid = auth.userId;
-  const workspace = resolveNotificationWorkspace(req);
-  const scope = notificationScopeClause(auth, workspace, 2);
-  const baseParams = [uid, ...scope.params];
+  const { scope, scopeParams, workspace } = resolveEventSyncScope(auth, req, 2);
+  const baseParams = [uid, ...scopeParams];
   const since = parseSince(req.query?.since);
   const limit = Math.min(100, Math.max(1, parseInt(req.query?.limit, 10) || 50));
   const roles = auth?.roles || [];

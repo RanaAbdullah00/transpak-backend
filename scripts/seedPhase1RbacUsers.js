@@ -41,6 +41,16 @@ const ACCOUNTS = [
     phone: "+923001111003",
     cnic: "35201-3000003-3",
     fullName: "Phase1 Admin Only"
+  },
+  {
+    key: "dual",
+    emailEnv: "E2E_DUAL_EMAIL",
+    defaultEmail: "transpak.phase1.dual@example.com",
+    roles: ["shipper", "carrier"],
+    activeRole: "shipper",
+    phone: "+923001111004",
+    cnic: "35201-4000004-4",
+    fullName: "Phase1 Dual Commercial"
   }
 ];
 

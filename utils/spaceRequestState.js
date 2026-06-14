@@ -25,4 +25,8 @@ function assertSpaceTransition(from, to) {
   }
 }
 
-module.exports = { assertSpaceTransition };
+/** Operation Center "Request sent" — pending lifecycle only (not active/completed/rejected). */
+const REQUEST_SENT_OPS_STATUSES = ["request_sent", "accepted"];
+const REQUEST_SENT_OPS_SQL = "r.status IN ('request_sent', 'accepted')";
+
+module.exports = { assertSpaceTransition, REQUEST_SENT_OPS_STATUSES, REQUEST_SENT_OPS_SQL };

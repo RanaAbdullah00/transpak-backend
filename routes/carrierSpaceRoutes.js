@@ -61,10 +61,16 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
     clauses.push(`(s.available_from IS NULL OR s.available_from <= $${params.length}::date)`);
   }
   const roles = req.auth?.roles || [];
-  if (roles.includes("shipper") && !hasAdminRole(req.auth)) {
+  if (!hasAdminRole(req.auth)) {
     params.push(req.auth.userId);
     clauses.push(`s.carrier_id <> $${params.length}`);
   }
+  clauses.push(`NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(COALESCE(s.availability_slots, '[]'::jsonb)) elem
+    WHERE elem->>'type' = 'visibility'
+      AND elem->>'visibleUntil' IS NOT NULL
+      AND (elem->>'visibleUntil')::timestamptz < now()
+  )`);
   const { rows } = await dbQuery(
     `SELECT s.id, s.carrier_id AS "carrierId", s.origin, s.destination,
             s.truck_capacity_kg AS "truckCapacityKg", s.remaining_space_kg AS "remainingSpaceKg",

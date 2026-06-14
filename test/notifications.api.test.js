@@ -1,7 +1,7 @@
 /**
  * Phase 5 — Notification dedup + unread count stability (HTTP).
  */
-const { describe, it, before } = require("node:test");
+const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { hasIntegrationEnv, skipIntegrationReason } = require("./helpers/config");
 const { api, login } = require("./helpers/http");
@@ -77,3 +77,102 @@ describe("Notifications safety", { skip: hasIntegrationEnv() ? false : skipInteg
     assert.ok(sync.payload?.serverTime);
   });
 });
+
+const { hasDatabaseUrl, getBaseUrl, skipDbReason } = require("./helpers/config");
+const { insertTestNotification, findUserIdByEmail, closePool } = require("./helpers/db");
+
+function hasDualRoleEnv() {
+  const password = process.env.PHASE1_RBAC_PASSWORD || process.env.E2E_SHIPPER_PASSWORD;
+  const email = process.env.E2E_DUAL_EMAIL || "transpak.phase1.dual@example.com";
+  return Boolean(hasDatabaseUrl() && password && email && getBaseUrl());
+}
+
+describe(
+  "Dual-role includeAllRoles notification PATCH",
+  { skip: hasDualRoleEnv() ? false : skipDbReason() },
+  () => {
+    let token;
+    let userId;
+    const stamp = Date.now();
+
+    before(async () => {
+      const email = process.env.E2E_DUAL_EMAIL || "transpak.phase1.dual@example.com";
+      const password = process.env.PHASE1_RBAC_PASSWORD || process.env.E2E_SHIPPER_PASSWORD;
+      const session = await login(email, password, "shipper");
+      token = session.token;
+      userId = session.user?.id;
+      assert.ok(userId, "dual user id required");
+
+      const row = await findUserIdByEmail(email);
+      assert.ok(row?.roles?.includes("shipper") && row?.roles?.includes("carrier"), "dual account must have both roles");
+
+      await insertTestNotification(userId, "shipper", `DUAL_PATCH_${stamp}_S`, "shipper scope seed");
+      await insertTestNotification(userId, "carrier", `DUAL_PATCH_${stamp}_C`, "carrier scope seed");
+    });
+
+    after(async () => {
+      await closePool();
+    });
+
+    it("includeAllRoles unread count spans both commercial roles", async () => {
+      const scoped = await api("GET", "/api/notifications/unread-count", {
+        token,
+        workspace: "shipper"
+      });
+      const all = await api("GET", "/api/notifications/unread-count", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+      assert.ok(scoped.ok && all.ok);
+      assert.ok((all.payload?.count ?? 0) >= (scoped.payload?.count ?? 0));
+      assert.ok((all.payload?.count ?? 0) >= 2);
+    });
+
+    it("single read with includeAllRoles decrements combined unread", async () => {
+      const list = await api("GET", "/api/notifications", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId), limit: "10" }
+      });
+      const items = Array.isArray(list.payload) ? list.payload : list.payload?.items || [];
+      const unreadItem = items.find((n) => !n.read);
+      assert.ok(unreadItem?.id, "expected unread notification");
+
+      const before = await api("GET", "/api/notifications/unread-count", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+
+      const patched = await api("PATCH", `/api/notifications/${unreadItem.id}/read`, {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+      assert.ok(patched.ok, patched.message);
+
+      const after = await api("GET", "/api/notifications/unread-count", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+      assert.equal(after.payload?.count, (before.payload?.count ?? 0) - 1);
+    });
+
+    it("read-all with includeAllRoles clears unread and sync agrees", async () => {
+      await api("PATCH", "/api/notifications/read-all", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+
+      const after = await api("GET", "/api/notifications/unread-count", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+      assert.equal(after.payload?.count, 0);
+
+      const sync = await api("GET", "/api/operations/sync/events", {
+        token,
+        query: { includeAllRoles: "1", user_id: String(userId) }
+      });
+      assert.ok(sync.ok, sync.message);
+      assert.equal(sync.payload?.unreadCount, 0);
+    });
+  }
+);

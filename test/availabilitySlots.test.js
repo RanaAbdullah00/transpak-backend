@@ -16,4 +16,13 @@ describe("availabilitySlots", () => {
   it("validate returns ok for null", () => {
     assert.deepEqual(validateAvailabilitySlots(null), { ok: true, value: null });
   });
+
+  it("normalizes visibility duration metadata", () => {
+    const slots = normalizeAvailabilitySlots([
+      { type: "visibility", durationMinutes: 360, visibleUntil: "2030-01-01T00:00:00.000Z" }
+    ]);
+    assert.equal(slots.length, 1);
+    assert.equal(slots[0].type, "visibility");
+    assert.equal(slots[0].durationMinutes, 360);
+  });
 });

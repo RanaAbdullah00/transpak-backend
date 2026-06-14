@@ -133,7 +133,7 @@ router.get("/requests/incoming", protect, requireRole("carrier"), async (req, re
      JOIN carrier_space_listings sl ON sl.id = r.listing_id
      JOIN users u ON u.id = r.shipper_id
      LEFT JOIN loads l ON l.id = r.load_id
-     WHERE sl.carrier_id = $1 AND r.status NOT IN ('rejected', 'completed')
+     WHERE sl.carrier_id = $1 AND r.status IN ('request_sent', 'accepted')
      ORDER BY r.created_at DESC
      LIMIT 100`,
     [req.auth.userId]
@@ -153,7 +153,7 @@ router.get("/requests/sent", protect, requireRole("shipper"), async (req, res) =
      JOIN carrier_space_listings l ON l.id = r.listing_id
      JOIN users u ON u.id = l.carrier_id
      LEFT JOIN loads ld ON ld.id = r.load_id
-     WHERE r.shipper_id = $1
+     WHERE r.shipper_id = $1 AND r.status IN ('request_sent', 'accepted')
      ORDER BY r.created_at DESC
      LIMIT 100`,
     [req.auth.userId]

@@ -101,6 +101,17 @@ async function findUserIdByEmail(email) {
   return rows[0] || null;
 }
 
+async function insertTestNotification(receiverId, roleType, title, message) {
+  const dedupeKey = `test|${receiverId}|${Date.now()}|${Math.random().toString(36).slice(2, 8)}`;
+  const { rows } = await query(
+    `INSERT INTO notifications (receiver_id, sender_id, role_type, title, message, dedupe_key, event_id, read)
+     VALUES ($1, $1, $2, $3, $4, $5, gen_random_uuid(), false)
+     RETURNING id, role_type AS "roleType", read`,
+    [receiverId, roleType, title, message, dedupeKey]
+  );
+  return rows[0];
+}
+
 async function closePool() {
   const pool = getPool();
   if (pool && typeof pool.end === "function") {
@@ -120,5 +131,6 @@ module.exports = {
   getLoadStatus,
   deleteTestLoadCascade,
   findUserIdByEmail,
+  insertTestNotification,
   closePool
 };
