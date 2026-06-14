@@ -114,11 +114,11 @@ describe("Phase 5 — rating batch integrity under density", () => {
 });
 
 describe("Phase 5 — cross-instance conflict simulation (local)", () => {
-  it("in-memory notification dedupe blocks duplicate keys within window", () => {
+  it("in-memory notification dedupe blocks duplicate keys within window", async () => {
     const { InMemoryAdapter } = require("../utils/notificationDedupeAdapter");
     const a = new InMemoryAdapter(60_000);
-    a.set("notify-key-1");
-    assert.equal(a.has("notify-key-1"), true);
-    assert.equal(a.has("notify-key-2"), false);
+    await a.set("notify-key-1");
+    assert.equal(await a.has("notify-key-1"), true);
+    assert.equal(await a.has("notify-key-2"), false);
   });
 });

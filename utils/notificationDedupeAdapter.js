@@ -1,8 +1,10 @@
 /**
- * Phase 4 — notification dedupe adapter (in-memory default; Redis placeholder for multi-instance).
+ * Phase 6 — notification dedupe adapter (Redis primary, in-memory fallback).
  */
+const { getRedisClient } = require("./redisClient");
 
 const DEDUPE_WINDOW_MS = Number(process.env.NOTIFY_DEDUPE_MS || 120000);
+const REDIS_TTL_SEC = Number(process.env.NOTIFY_DEDUPE_REDIS_TTL_SEC || 180);
 
 class InMemoryAdapter {
   constructor(windowMs = DEDUPE_WINDOW_MS) {
@@ -11,7 +13,7 @@ class InMemoryAdapter {
     this.map = new Map();
   }
 
-  has(eventId) {
+  async has(eventId) {
     const key = String(eventId || "").trim();
     if (!key) return false;
     const ts = this.map.get(key);
@@ -23,54 +25,53 @@ class InMemoryAdapter {
     return true;
   }
 
-  set(eventId, at = Date.now()) {
+  async set(eventId, at = Date.now()) {
     const key = String(eventId || "").trim();
     if (!key) return;
     this.map.set(key, at);
-    this.clearExpired(at);
+    this.cleanup(at);
   }
 
-  clearExpired(now = Date.now()) {
+  cleanup(now = Date.now()) {
     if (this.map.size < 5000) return;
     for (const [k, ts] of this.map) {
       if (now - ts > this.windowMs) this.map.delete(k);
     }
   }
-
-  cleanup(now = Date.now()) {
-    this.clearExpired(now);
-  }
 }
 
-/** Future multi-instance adapter — NOT ACTIVE until Redis wiring is complete. */
 class RedisAdapter {
-  constructor() {
-    this.enabled = false;
+  constructor(redis, ttlSec = REDIS_TTL_SEC) {
+    this.redis = redis;
+    this.ttlSec = ttlSec;
   }
 
-  has() {
-    throw new Error("RedisAdapter is not active — set NOTIFY_DEDUPE_REDIS after Redis wiring");
+  async has(eventId) {
+    const key = String(eventId || "").trim();
+    if (!key || !this.redis) return false;
+    const val = await this.redis.get(`notify:dedupe:${key}`);
+    return val != null;
   }
 
-  set() {
-    throw new Error("RedisAdapter is not active — set NOTIFY_DEDUPE_REDIS after Redis wiring");
+  async set(eventId) {
+    const key = String(eventId || "").trim();
+    if (!key || !this.redis) return;
+    await this.redis.setnxex(`notify:dedupe:${key}`, "1", this.ttlSec);
   }
 
-  clearExpired() {
-    return Promise.resolve();
-  }
-
-  cleanup() {
-    return Promise.resolve();
+  async cleanup() {
+    return undefined;
   }
 }
 
 function createNotificationDedupeAdapter() {
+  const redis = getRedisClient();
+  if (redis.isEnabled()) {
+    return new RedisAdapter(redis, REDIS_TTL_SEC);
+  }
   if (process.env.NOTIFY_DEDUPE_REDIS === "1") {
     // eslint-disable-next-line no-console
-    console.warn(
-      "[notify] NOTIFY_DEDUPE_REDIS=1 but RedisAdapter is not wired — using InMemoryAdapter"
-    );
+    console.warn("[notify] NOTIFY_DEDUPE_REDIS=1 but REDIS unavailable — using InMemoryAdapter");
   }
   return new InMemoryAdapter();
 }

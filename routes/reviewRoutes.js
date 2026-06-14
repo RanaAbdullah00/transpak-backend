@@ -8,6 +8,7 @@ const { query } = require("../db/pool");
 const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey } = require("../utils/realtimeDispatch");
 const { writeAudit } = require("../utils/auditLog");
+const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 
 const router = express.Router();
 
@@ -121,6 +122,7 @@ router.post(
   "/",
   protect,
   requireAnyRole(COMMERCIAL_ROLES),
+  withIdempotencyKey("reviews"),
   [
     body("toUser").custom((v) => (isUuid(v) ? true : (() => { throw new Error("toUser is required"); })())),
     body("rating").isInt({ min: 1, max: 5 }).withMessage("rating must be 1–5"),

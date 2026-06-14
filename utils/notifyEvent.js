@@ -162,7 +162,7 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
   const dedupeKey = idempotencyKey || dedupeKeyFromContent(receiverId, title, message);
   const now = Date.now();
   notificationDedupe.clearExpired(now);
-  if (notificationDedupe.has(dedupeKey)) {
+  if (await notificationDedupe.has(dedupeKey)) {
     const cached = await findByDedupeKey(receiverId, dedupeKey);
     if (cached) {
       queueSocketEmit(receiverId, toSocketPayload(cached, eventType), cached.roleType);
@@ -175,7 +175,7 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
       (await findByDedupeKey(receiverId, dedupeKey)) ||
       (await findRecentNotification(receiverId, title, message));
     if (existing) {
-      notificationDedupe.set(dedupeKey, now);
+      await notificationDedupe.set(dedupeKey, now);
       queueSocketEmit(receiverId, toSocketPayload(existing, eventType), existing.roleType);
       return existing;
     }
@@ -190,7 +190,7 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
       dedupeKey,
       eventId
     });
-    notificationDedupe.set(dedupeKey, now);
+    await notificationDedupe.set(dedupeKey, now);
     if (row) {
       queueSocketEmit(receiverId, toSocketPayload(row, eventType), row.roleType);
     }

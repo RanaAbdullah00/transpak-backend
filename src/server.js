@@ -187,6 +187,8 @@ async function start() {
   });
 
   realtimeHub.setIO(io);
+  const { initDistributedSocketBus } = require("../services/distributedSocketBus");
+  initDistributedSocketBus();
   registerSocketHandlers(io);
 
   if (process.env.NODE_ENV === "production" && !realtimeHub.isEngineReady()) {

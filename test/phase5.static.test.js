@@ -47,19 +47,30 @@ describe("Phase 5 — observability export layer", () => {
 });
 
 describe("Phase 5 — Redis adapter inactive by default", () => {
-  it("createNotificationDedupeAdapter uses InMemory when Redis flag set", () => {
+  it("createNotificationDedupeAdapter uses InMemory when Redis unavailable", () => {
     const prev = process.env.NOTIFY_DEDUPE_REDIS;
+    const prevUrl = process.env.REDIS_URL;
+    delete process.env.REDIS_URL;
     process.env.NOTIFY_DEDUPE_REDIS = "1";
     const { createNotificationDedupeAdapter, InMemoryAdapter } = require("../utils/notificationDedupeAdapter");
+    const { resetRedisClientForTests } = require("../utils/redisClient");
+    resetRedisClientForTests();
     const adapter = createNotificationDedupeAdapter();
     assert.ok(adapter instanceof InMemoryAdapter);
     process.env.NOTIFY_DEDUPE_REDIS = prev;
+    process.env.REDIS_URL = prevUrl;
+    resetRedisClientForTests();
   });
 
-  it("RedisAdapter remains stub-only", () => {
+  it("RedisAdapter uses NX semantics via redis client", async () => {
     const { RedisAdapter } = require("../utils/notificationDedupeAdapter");
-    const redis = new RedisAdapter();
-    assert.throws(() => redis.has("x"), /not active/i);
+    const { getRedisClient, resetRedisClientForTests } = require("../utils/redisClient");
+    resetRedisClientForTests();
+    const adapter = new RedisAdapter(getRedisClient());
+    assert.equal(await adapter.has("x"), false);
+    await adapter.set("x");
+    assert.equal(await adapter.has("x"), true);
+    resetRedisClientForTests();
   });
 });
 
@@ -70,12 +81,12 @@ describe("Phase 5 — event contract enforced (cross-layer)", () => {
     assert.ok(readFe("hooks/useShipmentTracking.js").includes("rememberTrackingEvent"));
   });
 
-  it("NotificationDedupeAdapter exposes cleanup()", () => {
+  it("NotificationDedupeAdapter exposes cleanup()", async () => {
     const { InMemoryAdapter } = require("../utils/notificationDedupeAdapter");
     const a = new InMemoryAdapter(5000);
-    a.set("k");
+    await a.set("k");
     assert.equal(typeof a.cleanup, "function");
-    assert.equal(a.has("k"), true);
+    assert.equal(await a.has("k"), true);
   });
 });
 

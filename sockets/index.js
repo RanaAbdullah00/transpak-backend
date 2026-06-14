@@ -1,8 +1,7 @@
 const { verifyToken } = require("../utils/jwt");
 const { query: db } = require("../db/pool");
 const {
-  trackRoomKey,
-  buildTrackingUpdatePayload
+  trackRoomKey
 } = require("../utils/trackingPayload");
 const {
   validateGpsCoordinates,
@@ -11,6 +10,7 @@ const {
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
+const { publishTrackingEvent } = require("../utils/trackingEventPublisher");
 const realtimeHub = require("../services/realtimeHub");
 const { allowSocketEvent, clearSocketRateLimits } = require("../utils/socketEventRateLimit");
 const {
@@ -264,21 +264,22 @@ module.exports = function registerSocketHandlers(io) {
         markGpsWritten(load.id);
         await appendShipmentLocationLog(load.id, lat, lng);
 
-        const updatePayload = await buildTrackingUpdatePayload(load.id, lat, lng);
-        if (!updatePayload) {
-          if (typeof ack === "function") ack({ ok: false });
-          return;
-        }
-
-        const room = trackRoomKey(load);
-        if (room) {
-          io.to(`track:${room}`).emit("tracking:update", updatePayload);
-        }
         const { rows: shipRows } = await db(`SELECT id FROM shipments WHERE load_id = $1 LIMIT 1`, [
           load.id
         ]);
-        if (shipRows[0]?.id) {
-          io.to(`shipment:${shipRows[0].id}`).emit("tracking:update", updatePayload);
+
+        const updatePayload = await publishTrackingEvent({
+          loadId: load.id,
+          shipmentId: shipRows[0]?.id,
+          lat,
+          lng,
+          source: "socket",
+          eventId: payload?.eventId,
+          idempotencyKey: payload?.idempotencyKey
+        });
+        if (!updatePayload) {
+          if (typeof ack === "function") ack({ ok: false, duplicate: true });
+          return;
         }
         if (typeof ack === "function") ack({ ok: true, data: updatePayload });
       } catch {

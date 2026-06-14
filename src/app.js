@@ -295,6 +295,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api/carrier-space", forbidAdminOnlyCommercial, require("../routes/carrierSpaceRoutes"));
   app.use("/api/carrier-space", forbidAdminOnlyCommercial, require("../routes/spaceBookingRoutes"));
   app.use("/api/operations", forbidAdminOnlyCommercial, require("../routes/operationsRoutes"));
+  app.use("/api/metrics", forbidAdminOnlyCommercial, require("../routes/metricsRoutes"));
+  app.use("/api/replay", forbidAdminOnlyCommercial, require("../routes/replayRoutes"));
   app.use("/api/admin", adminRoutes);
   app.use("/api/reviews", forbidAdminOnlyCommercial, reviewRoutes);
   app.use("/api/ratings", forbidAdminOnlyCommercial, reviewRoutes);

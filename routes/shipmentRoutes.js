@@ -25,6 +25,8 @@ const {
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
 const { shipmentsRouteLimiter } = require("../middleware/apiRateLimit");
+const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
+const { publishTrackingEvent } = require("../utils/trackingEventPublisher");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 const { writeAudit } = require("../utils/auditLog");
 const {
@@ -352,6 +354,7 @@ router.put(
   "/:id/status",
   protect,
   requireRole("carrier"),
+  withIdempotencyKey("shipment_status"),
   shipmentIdParam,
   shipmentStatusPutValidators,
   handleValidationErrors,
@@ -464,15 +467,21 @@ router.put(
       }
 
       const history = await getShipmentHistory(shipment.id);
-      const core = await buildTrackingUpdatePayload(load.id, null, null);
+      const core = await publishTrackingEvent({
+        loadId: load.id,
+        shipmentId: shipment.id,
+        lat: null,
+        lng: null,
+        source: "api",
+        eventId: req.eventId,
+        idempotencyKey: req.idempotencyKey,
+        extra: { trackingState: "SYNCED" }
+      });
       const payload = toTrackResponse(req, {
-        ...core,
+        ...(core || (await buildTrackingUpdatePayload(load.id, null, null)) || {}),
         refKey: trackingRefKey(load),
         history
       });
-      const room = trackRoomKey(load);
-      if (room && core) emitToTracking(room, "tracking:update", core);
-      if (shipment?.id && core) emitToShipment(shipment.id, "tracking:update", core);
       const auditActionMap = {
         pickedup: "shipment.picked_up",
         intransit: "shipment.in_transit",
@@ -504,6 +513,7 @@ router.put(
   "/:id/location",
   protect,
   requireRole("carrier"),
+  withIdempotencyKey("shipment_location"),
   shipmentIdParam,
   [
     body("lat").isFloat({ min: -90, max: 90 }).withMessage("Invalid lat"),
@@ -544,17 +554,21 @@ router.put(
       await appendShipmentLocationLog(load.id, lat, lng);
 
       const history = await getShipmentHistory(shipment.id);
-      const core = await buildTrackingUpdatePayload(load.id, lat, lng);
+      const core = await publishTrackingEvent({
+        loadId: load.id,
+        shipmentId: shipment.id,
+        lat,
+        lng,
+        source: "api",
+        eventId: req.eventId,
+        idempotencyKey: req.idempotencyKey
+      });
       const payload = toTrackResponse(req, {
-        ...core,
+        ...(core || (await buildTrackingUpdatePayload(load.id, lat, lng)) || {}),
         refKey: trackingRefKey(load),
         history
       });
 
-      const room = trackRoomKey(load);
-      if (room && core) {
-        emitToTracking(room, "tracking:update", core);
-      }
       return sendSuccess(res, 200, payload);
     } catch (err) {
       const status = err.statusCode || 500;

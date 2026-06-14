@@ -75,14 +75,14 @@ describe("Phase 4 — distributed safety (frontend)", () => {
 });
 
 describe("Phase 4 — notification dedupe adapter (backend)", () => {
-  it("adapter module exposes InMemory and Redis placeholder", () => {
+  it("adapter module exposes InMemory and Redis adapters", async () => {
     const adapter = require("../utils/notificationDedupeAdapter");
     assert.equal(typeof adapter.createNotificationDedupeAdapter, "function");
     assert.equal(typeof adapter.InMemoryAdapter, "function");
     assert.equal(typeof adapter.RedisAdapter, "function");
     const mem = new adapter.InMemoryAdapter(5000);
-    mem.set("k1");
-    assert.equal(mem.has("k1"), true);
+    await mem.set("k1");
+    assert.equal(await mem.has("k1"), true);
   });
 
   it("notifyEvent uses createNotificationDedupeAdapter", () => {

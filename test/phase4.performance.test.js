@@ -104,7 +104,7 @@ describe("Phase 4 — tracking coordinator stress (synthetic flush paths)", () =
       "utf8"
     );
     assert.ok(src.includes("const FLUSH_MAX_MS = 300"));
-    assert.ok(src.includes("debounce_300ms"));
+    assert.ok(src.includes("flush_debounce_300ms"));
   });
 });
 
