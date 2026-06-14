@@ -102,7 +102,9 @@ function buildCorsMiddlewareConfig() {
       "Authorization",
       "X-Requested-With",
       "X-TransPak-Workspace",
-      "X-TransPak-User-Id"
+      "X-TransPak-User-Id",
+      "X-Trace-Id",
+      "X-Request-Id"
     ],
     exposedHeaders: ["X-TransPak-Version", "X-TransPak-Build"],
     optionsSuccessStatus: 204,
@@ -137,6 +139,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.options(/.*/, cors(corsOptions));
 
   app.use(deployHeaders);
+  const { traceMiddleware } = require("../middleware/traceMiddleware");
+  app.use(traceMiddleware);
   app.use(requestLogger);
 
   app.use(
@@ -180,11 +184,12 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api", globalApiLimiter);
 
   app.get("/api/health", async (req, res) => {
-    const { resolveDatabaseHealth } = require("../utils/healthStatus");
+    const { resolveDatabaseHealth, resolveDistributedHealthForApi } = require("../utils/healthStatus");
     const { getOpsSnapshot } = require("../utils/opsTelemetry");
     const realtimeHub = require("../services/realtimeHub");
     const uptime = process.uptime();
     const dbHealth = await resolveDatabaseHealth(dbState, uptime);
+    const distributed = resolveDistributedHealthForApi();
 
     if (!dbHealth.booting) {
       if (dbHealth.dbReady && !dbState.ready) {
@@ -213,17 +218,25 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
           schemaOk: schema.ok === true
         });
 
-    return res.json({
-      success: true,
-      message: "ok",
-      data: {
-        status: dbHealth.booting
+    let status = dbHealth.booting
+      ? "starting"
+      : dbHealth.dbReady
+        ? "ok"
+        : dbHealth.db === "connecting"
           ? "starting"
-          : dbHealth.dbReady
-            ? "ok"
-            : dbHealth.db === "connecting"
-              ? "starting"
-              : "degraded",
+          : "degraded";
+
+    if (distributed.requiresRedis && !distributed.ok) {
+      status = "critical";
+    }
+
+    const httpStatus = status === "critical" ? 503 : 200;
+
+    return res.status(httpStatus).json({
+      success: status !== "critical",
+      message: status === "critical" ? "critical" : "ok",
+      data: {
+        status,
         healthPhase: dbHealth.healthPhase || (dbHealth.booting ? "booting" : "ready"),
         version: APP_VERSION,
         build: BUILD_ID,
@@ -245,6 +258,7 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         migrationRequired: dbHealth.migrationRequired,
         deploymentStatus,
         deploy,
+        distributed,
         socketEngine: realtimeHub.isEngineReady() ? "ready" : "missing",
         sockets: realtimeHub.getConnectedSocketCount(),
         ops: getOpsSnapshot({ includeRecent: false })
@@ -297,6 +311,8 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
   app.use("/api/operations", forbidAdminOnlyCommercial, require("../routes/operationsRoutes"));
   app.use("/api/metrics", forbidAdminOnlyCommercial, require("../routes/metricsRoutes"));
   app.use("/api/replay", forbidAdminOnlyCommercial, require("../routes/replayRoutes"));
+  app.use("/api/traces", forbidAdminOnlyCommercial, require("../routes/traceRoutes"));
+  app.use("/api/alerts", require("../routes/alertRoutes"));
   app.use("/api/admin", adminRoutes);
   app.use("/api/reviews", forbidAdminOnlyCommercial, reviewRoutes);
   app.use("/api/ratings", forbidAdminOnlyCommercial, reviewRoutes);

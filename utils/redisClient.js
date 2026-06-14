@@ -1,5 +1,5 @@
 /**
- * Phase 6 — Redis client with graceful in-memory fallback.
+ * Phase 6/7 — Redis client with graceful in-memory fallback (disabled in strict distributed mode).
  */
 let RedisImpl = null;
 try {
@@ -13,7 +13,26 @@ let client = null;
 let mode = "memory";
 let warnedFallback = false;
 
+function getRequiresRedis() {
+  try {
+    const { requiresRedis } = require("./distributedMode");
+    return requiresRedis();
+  } catch {
+    return false;
+  }
+}
+
+function failStrictRedis(reason) {
+  const msg = `[redis] strict distributed mode requires Redis: ${reason}`;
+  // eslint-disable-next-line no-console
+  console.error(msg);
+  throw new Error(msg);
+}
+
 function warnFallback(reason) {
+  if (getRequiresRedis()) {
+    failStrictRedis(reason);
+  }
   if (warnedFallback) return;
   warnedFallback = true;
   // eslint-disable-next-line no-console
@@ -21,6 +40,9 @@ function warnFallback(reason) {
 }
 
 function createMemoryClient() {
+  if (getRequiresRedis()) {
+    failStrictRedis("memory fallback disabled in strict distributed mode");
+  }
   return {
     isEnabled: () => false,
     mode: () => "memory",
@@ -79,6 +101,9 @@ function getRedisClient() {
 
   const url = String(process.env.REDIS_URL || "").trim();
   if (!url || !RedisImpl) {
+    if (getRequiresRedis()) {
+      failStrictRedis(!url ? "REDIS_URL not set" : "ioredis not installed");
+    }
     if (!url && process.env.NOTIFY_DEDUPE_REDIS === "1") {
       warnFallback("REDIS_URL not set");
     }
@@ -94,7 +119,12 @@ function getRedisClient() {
       lazyConnect: true
     });
     redis.on("error", (err) => {
-      warnFallback(err?.message || "connection error");
+      if (getRequiresRedis()) {
+        // eslint-disable-next-line no-console
+        console.error("[redis] connection error in strict mode:", err?.message || err);
+      } else {
+        warnFallback(err?.message || "connection error");
+      }
     });
     client = {
       isEnabled: () => true,
@@ -109,12 +139,22 @@ function getRedisClient() {
       publish: (ch, msg) => redis.publish(ch, msg),
       duplicate: () => redis.duplicate(),
       on: (...args) => redis.on(...args),
-      subscribe: (...args) => redis.subscribe(...args)
+      subscribe: (...args) => redis.subscribe(...args),
+      unsubscribe: (...args) => redis.unsubscribe?.(...args)
     };
     mode = "redis";
-    redis.connect?.().catch(() => warnFallback("connect failed"));
+    redis.connect?.().catch((err) => {
+      if (getRequiresRedis()) {
+        failStrictRedis(err?.message || "connect failed");
+      } else {
+        warnFallback("connect failed");
+      }
+    });
     return client;
   } catch (err) {
+    if (getRequiresRedis()) {
+      failStrictRedis(err?.message || "init failed");
+    }
     warnFallback(err?.message || "init failed");
     client = createMemoryClient();
     mode = "memory";

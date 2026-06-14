@@ -191,6 +191,23 @@ async function start() {
   initDistributedSocketBus();
   registerSocketHandlers(io);
 
+  const { requiresRedis } = require("../utils/distributedMode");
+  if (requiresRedis()) {
+    try {
+      const { runDistributedBootstrapGuard } = require("../utils/distributedBootstrapGuard");
+      await runDistributedBootstrapGuard({ throwOnFail: true });
+    } catch (err) {
+      console.error("[server] Distributed bootstrap guard failed:", err?.message || err);
+      process.exit(1);
+    }
+  }
+
+  const { startAlertEngine } = require("../utils/alertEngine");
+  startAlertEngine();
+
+  const { pruneOldSpans } = require("../utils/traceStore");
+  setInterval(() => pruneOldSpans().catch(() => {}), 6 * 60 * 60 * 1000).unref?.();
+
   if (process.env.NODE_ENV === "production" && !realtimeHub.isEngineReady()) {
     console.error("[server] Socket.io engine failed to initialize — aborting deploy boot");
     process.exit(1);

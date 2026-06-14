@@ -66,6 +66,20 @@ function recordSourceSwitch() {
 
 function ingestClientMetrics(payload = {}) {
   metrics.infrastructure.clientIngestCount += 1;
+  const traceId = payload.traceId || payload.metrics?.traceId;
+  if (traceId) {
+    try {
+      const { persistSpan } = require("./traceStore");
+      persistSpan({
+        traceId,
+        spanName: "client_apply",
+        shipmentId: payload.shipmentId || payload.metrics?.shipmentId || null,
+        metadata: { source: "client_ingest" }
+      }).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
   const rating = payload.metrics?.rating || payload.rating;
   const tracking = payload.metrics?.tracking || payload.tracking;
   if (rating) {

@@ -65,9 +65,13 @@ class RedisAdapter {
 }
 
 function createNotificationDedupeAdapter() {
+  const { requiresRedis } = require("./distributedMode");
   const redis = getRedisClient();
   if (redis.isEnabled()) {
     return new RedisAdapter(redis, REDIS_TTL_SEC);
+  }
+  if (requiresRedis()) {
+    throw new Error("[notify] Strict distributed mode requires Redis for notification dedupe");
   }
   if (process.env.NOTIFY_DEDUPE_REDIS === "1") {
     // eslint-disable-next-line no-console

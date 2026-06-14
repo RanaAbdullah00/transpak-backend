@@ -96,7 +96,7 @@ describe("Phase 6 — distributed socket + observability", () => {
   it("replay route returns ordered shipment events", () => {
     const src = read("routes/replayRoutes.js");
     assert.ok(src.includes('"/shipment/:id"'));
-    assert.ok(src.includes("getShipmentReplayEvents"));
+    assert.ok(src.includes("buildCausalTree"));
   });
 
   it("frontend posts telemetry to /metrics/ingest", () => {
