@@ -7,6 +7,11 @@ const { buildEventSync } = require("../utils/eventSync");
 const { notificationScopeClause } = require("../utils/notificationScope");
 const { resolveNotificationWorkspace } = require("../utils/notificationWorkspace");
 const { REQUEST_SENT_OPS_SQL } = require("../utils/spaceRequestState");
+const {
+  ingestClientPerfSnapshot,
+  getClientPerfSnapshots,
+  isIngestEnabled
+} = require("../utils/clientPerfTelemetry");
 
 const router = express.Router();
 
@@ -203,6 +208,40 @@ router.get(
         params
       );
       return sendSuccess(res, 200, rows);
+    } catch (err) {
+      return sendError(res, 500, err.message || "Server error");
+    }
+  }
+);
+
+/** Phase 5 — optional sampled client perf ingest (disabled unless ENABLE_CLIENT_PERF_INGEST=true). */
+router.post(
+  "/client-perf",
+  protect,
+  requireAnyRole(["shipper", "carrier", "admin"]),
+  async (req, res) => {
+    try {
+      const result = ingestClientPerfSnapshot(req.body || {});
+      if (!result.accepted) {
+        return sendSuccess(res, 202, { ingested: false, reason: result.reason });
+      }
+      return sendSuccess(res, 202, { ingested: true });
+    } catch (err) {
+      return sendError(res, 500, err.message || "Server error");
+    }
+  }
+);
+
+router.get(
+  "/client-perf",
+  protect,
+  requireAnyRole(["admin"]),
+  async (req, res) => {
+    try {
+      return sendSuccess(res, 200, {
+        enabled: isIngestEnabled(),
+        snapshots: getClientPerfSnapshots()
+      });
     } catch (err) {
       return sendError(res, 500, err.message || "Server error");
     }

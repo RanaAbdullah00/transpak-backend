@@ -1,27 +1,20 @@
 const { query } = require("../db/pool");
+const { createNotificationDedupeAdapter } = require("./notificationDedupeAdapter");
 const { buildDedupeKey, newEventId, emitDispatchEvent, DISPATCH_TYPES } = require("./realtimeDispatch");
 const { resolveEventType } = require("./eventContractRegistry");
 const { roleNotifyGuard } = require("./roleNotifyGuard");
 
 const MAX_CARRIER_BROADCAST = Number(process.env.LOAD_NOTIFY_CARRIER_LIMIT || 250);
 const SOCKET_FLUSH_MS = Number(process.env.NOTIFY_SOCKET_FLUSH_MS || 400);
-const DEDUPE_WINDOW_MS = Number(process.env.NOTIFY_DEDUPE_MS || 120000);
 
 /** @type {Map<string, { payloads: object[], timer: NodeJS.Timeout|null, roleType: string|null, seen: Set<string> }>} */
 const socketQueues = new Map();
 
-/** In-memory idempotency (per process). Not shared across Render instances — duplicate inserts are still blocked by DB dedupe_key. */
-const memoryDedupe = new Map();
+/** In-memory idempotency (per process). Adapter preserves Phase 3 behavior; Redis-ready for multi-instance. */
+const notificationDedupe = createNotificationDedupeAdapter();
 
 function dedupeKeyFromContent(receiverId, title, message) {
   return buildDedupeKey([receiverId, title, String(message).slice(0, 120)]);
-}
-
-function pruneMemoryDedupe(now) {
-  if (memoryDedupe.size < 5000) return;
-  for (const [k, ts] of memoryDedupe) {
-    if (now - ts > DEDUPE_WINDOW_MS) memoryDedupe.delete(k);
-  }
 }
 
 function toSocketPayload(row, eventType) {
@@ -168,8 +161,8 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
   const eventType = resolveEventType(type || title);
   const dedupeKey = idempotencyKey || dedupeKeyFromContent(receiverId, title, message);
   const now = Date.now();
-  pruneMemoryDedupe(now);
-  if (memoryDedupe.has(dedupeKey) && now - memoryDedupe.get(dedupeKey) < DEDUPE_WINDOW_MS) {
+  notificationDedupe.clearExpired(now);
+  if (notificationDedupe.has(dedupeKey)) {
     const cached = await findByDedupeKey(receiverId, dedupeKey);
     if (cached) {
       queueSocketEmit(receiverId, toSocketPayload(cached, eventType), cached.roleType);
@@ -182,7 +175,7 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
       (await findByDedupeKey(receiverId, dedupeKey)) ||
       (await findRecentNotification(receiverId, title, message));
     if (existing) {
-      memoryDedupe.set(dedupeKey, now);
+      notificationDedupe.set(dedupeKey, now);
       queueSocketEmit(receiverId, toSocketPayload(existing, eventType), existing.roleType);
       return existing;
     }
@@ -197,7 +190,7 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
       dedupeKey,
       eventId
     });
-    memoryDedupe.set(dedupeKey, now);
+    notificationDedupe.set(dedupeKey, now);
     if (row) {
       queueSocketEmit(receiverId, toSocketPayload(row, eventType), row.roleType);
     }
