@@ -30,4 +30,16 @@ describe("mergeShipmentTimelineEvents", () => {
     assert.equal(effectiveStatus, "closed");
     assert.ok(events.some((ev) => ev.status === "closed"));
   });
+
+  it("dedupeTimelineEvents collapses duplicate status rows", async () => {
+    const mod = await import(pathToFileURL(optimisticPath).href);
+    const { dedupeTimelineEvents } = mod;
+    const ts = "2024-06-01T12:00:00.000Z";
+    const out = dedupeTimelineEvents([
+      { event: "booked", time: ts, status: "booked" },
+      { event: "Status: booked", time: ts, status: "booked" },
+      { event: "intransit", time: "2024-06-01T14:00:00.000Z", status: "intransit" }
+    ]);
+    assert.equal(out.length, 2);
+  });
 });

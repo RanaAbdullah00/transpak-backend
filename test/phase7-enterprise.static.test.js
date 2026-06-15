@@ -34,7 +34,7 @@ describe("Phase 7 Enterprise — strict distributed mode", () => {
     assert.ok(sql.includes("parent_event_id"));
     assert.ok(sql.includes("trace_spans"));
     assert.ok(sql.includes("system_alerts"));
-    assert.equal(read("db/schemaGuard.js").includes('SCHEMA_VERSION = "028"'), true);
+    assert.equal(read("db/schemaGuard.js").includes('SCHEMA_VERSION = "029"'), true);
   });
 });
 

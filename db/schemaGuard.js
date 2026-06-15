@@ -2,7 +2,7 @@
  * Read-only schema verification — NEVER modifies the database.
  * Use `npm run db:migrate` (db/migrate.js) to apply pending migrations.
  */
-const SCHEMA_VERSION = "028";
+const SCHEMA_VERSION = "029";
 
 /** Required columns for current backend (Phase 6+ realtime notifications). */
 const REQUIRED_COLUMNS = [
@@ -59,6 +59,12 @@ const REQUIRED_COLUMNS = [
     column: "severity",
     migration: "028_phase7_causal_tracing_alerts.sql",
     migrationVersion: "028"
+  },
+  {
+    table: "users",
+    column: "review_prompt_dismissed",
+    migration: "029_review_prompt_dismissed.sql",
+    migrationVersion: "029"
   }
 ];
 

@@ -26,8 +26,15 @@ function trackingRefKey(load) {
 
 async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
   const { rows: loadRows } = await query(
-    `SELECT id, code, origin, destination, status, assigned_carrier_id
-     FROM loads WHERE id = $1`,
+    `SELECT l.id, l.code, l.origin, l.destination, l.status, l.assigned_carrier_id, l.pickup_date,
+            COALESCE(uc.full_name, uc.email, 'Carrier') AS carrier_name,
+            uc.phone AS carrier_phone,
+            t.license_plate AS truck_plate,
+            t.truck_type AS truck_vehicle_type
+     FROM loads l
+     LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
+     LEFT JOIN trucks t ON t.user_id = l.assigned_carrier_id AND t.is_default = true AND t.status = 'approved'
+     WHERE l.id = $1`,
     [loadId]
   );
   const load = loadRows[0];
@@ -77,12 +84,24 @@ async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
 
   const { ts: _dropTs, ...safeExtra } = extra || {};
   const distanceKm = distanceBetweenCities(origin, destination);
+  const travelHours =
+    distanceKm != null && distanceKm > 0 ? Math.max(0.5, Math.round((distanceKm / 65) * 10) / 10) : null;
+  const eta =
+    travelHours != null
+      ? new Date(Date.now() + travelHours * 3600 * 1000).toISOString()
+      : load.pickup_date
+        ? new Date(`${String(load.pickup_date).slice(0, 10)}T12:00:00.000Z`).toISOString()
+        : null;
   return {
     loadId: String(load.id),
     refKey: trackingRefKey(load),
     origin,
     destination,
     distanceKm: distanceKm != null && distanceKm > 0 ? distanceKm : null,
+    carrierName: load.carrier_name || null,
+    carrierPhone: load.carrier_phone || null,
+    vehicleReg: load.truck_plate || null,
+    vehicleType: load.truck_vehicle_type || null,
     lifecycleStage: computeLifecycleStage({
       loadStatus: load.status,
       shipmentStatus: shipment.status,
@@ -94,7 +113,11 @@ async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
       status: normalizeShipmentStatus(shipment.status) || "posted",
       currentLocation,
       locationUnavailable: !currentLocation,
-      locationUpdatedAt
+      locationUpdatedAt,
+      eta,
+      driverName: load.carrier_name || null,
+      vehicleReg: load.truck_plate || null,
+      vehicleType: load.truck_vehicle_type || null
     },
     liveTrackingMap: { coordinates: routeCoords },
     ...safeExtra,

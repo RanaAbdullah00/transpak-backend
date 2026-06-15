@@ -18,6 +18,8 @@ const {
   FORBIDDEN_CODES
 } = require("../utils/resourceAuth");
 
+const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
+
 const router = express.Router();
 
 function isUuid(value) {
@@ -36,6 +38,7 @@ router.post(
   "/:listingId/request",
   protect,
   requireRole("shipper"),
+  withIdempotencyKey("capacity_request"),
   [
     param("listingId").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid listing"); })())),
     body("requestedKg").toFloat().isFloat({ gt: 0 }),
@@ -62,18 +65,48 @@ router.post(
       return sendError(res, 403, "Cannot request your own listing");
     }
 
-    const { rows } = await query(
-      `INSERT INTO carrier_space_requests (listing_id, shipper_id, requested_kg, message, status)
-       VALUES ($1, $2, $3, $4, 'request_sent')
-       ON CONFLICT (listing_id, shipper_id)
-       DO UPDATE SET requested_kg = EXCLUDED.requested_kg, message = EXCLUDED.message,
-                     status = 'request_sent', updated_at = now()
-       RETURNING id, listing_id AS "listingId", shipper_id AS "shipperId",
-                 requested_kg AS "requestedKg", message, status, created_at AS "createdAt"`,
-      [listingId, req.auth.userId, requestedKg, message]
+    const { rows: existingRows } = await query(
+      `SELECT id, status FROM carrier_space_requests
+       WHERE listing_id = $1 AND shipper_id = $2`,
+      [listingId, req.auth.userId]
     );
+    const existing = existingRows[0];
+    const lockedStatuses = new Set(["active", "in_transit", "completed"]);
+    if (existing && lockedStatuses.has(String(existing.status))) {
+      return sendError(
+        res,
+        409,
+        "This capacity request is already active or completed",
+        null,
+        "SPACE_REQUEST_LOCKED"
+      );
+    }
 
-    await notifyUser({
+    let rows;
+    if (existing) {
+      ({ rows } = await query(
+        `UPDATE carrier_space_requests
+         SET requested_kg = $3, message = $4, status = 'request_sent', updated_at = now()
+         WHERE id = $1 AND listing_id = $2 AND shipper_id = $5
+         RETURNING id, listing_id AS "listingId", shipper_id AS "shipperId",
+                   requested_kg AS "requestedKg", message, status, created_at AS "createdAt"`,
+        [existing.id, listingId, requestedKg, message, req.auth.userId]
+      ));
+    } else {
+      ({ rows } = await query(
+        `INSERT INTO carrier_space_requests (listing_id, shipper_id, requested_kg, message, status)
+         VALUES ($1, $2, $3, $4, 'request_sent')
+         RETURNING id, listing_id AS "listingId", shipper_id AS "shipperId",
+                   requested_kg AS "requestedKg", message, status, created_at AS "createdAt"`,
+        [listingId, req.auth.userId, requestedKg, message]
+      ));
+    }
+
+    if (!rows?.[0]) {
+      return sendError(res, 409, "Could not create or update capacity request", null, "SPACE_REQUEST_FAILED");
+    }
+
+    void notifyUser({
       receiverId: listing.carrier_id,
       senderId: req.auth.userId,
       roleType: "carrier",
@@ -83,7 +116,7 @@ router.post(
       idempotencyKey: buildDedupeKey(["SPACE_REQUEST", rows[0].id, listing.carrier_id])
     });
 
-    await notifyUser({
+    void notifyUser({
       receiverId: req.auth.userId,
       senderId: req.auth.userId,
       roleType: "shipper",
@@ -248,7 +281,7 @@ async function transitionRequest(req, res, nextStatus) {
     const [title, msgBase] = notifyMap[nextStatus] || ["SPACE_UPDATE", "Request updated"];
     const dispatchType = shipmentBridge ? "CONTRACT_STARTED" : title;
     const refSuffix = shipmentBridge?.loadCode ? ` (${shipmentBridge.loadCode})` : '';
-    await notifyUser({
+    void notifyUser({
       receiverId: row.shipper_id,
       senderId: row.carrier_id,
       roleType: "shipper",
@@ -390,7 +423,7 @@ async function partyTransition(req, res, nextStatus) {
   ]);
   const otherId = isShipper ? row.carrier_id : row.shipper_id;
   const receiverRole = isShipper ? "carrier" : "shipper";
-  await notifyUser({
+  void notifyUser({
     receiverId: otherId,
     senderId: uid,
     roleType: receiverRole,

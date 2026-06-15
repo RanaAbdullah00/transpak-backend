@@ -5,7 +5,8 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query: dbQuery } = require("../db/pool");
 const userRepo = require("../repositories/userRepo");
 const { notifyUser, notifyAdmins } = require("../utils/notifyEvent");
-const { buildDedupeKey } = require("../utils/realtimeDispatch");
+const { buildDedupeKey, newEventId } = require("../utils/realtimeDispatch");
+const { emitContractDispatch, emitContractEntityDispatch } = require("../utils/eventContractRegistry");
 const {
   canMutateCarrierSpaceListing,
   hasAdminRole,
@@ -14,6 +15,7 @@ const {
 } = require("../utils/resourceAuth");
 const { closeExpiredCapacityListings } = require("../utils/capacityListingLifecycle");
 const { validateAvailabilitySlots } = require("../utils/availabilitySlots");
+const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 
 const router = express.Router();
 
@@ -32,7 +34,7 @@ function validate(req, res, next) {
 }
 
 router.get("/", protect, requireAnyRole(["shipper", "admin"]), async (req, res) => {
-  await closeExpiredCapacityListings();
+  void closeExpiredCapacityListings().catch(() => {});
   const origin = String(req.query?.origin || "").trim();
   const destination = String(req.query?.destination || "").trim();
   const vehicleType = String(req.query?.vehicleType || "").trim();
@@ -129,6 +131,7 @@ router.post(
   "/",
   protect,
   requireRole("carrier"),
+  withIdempotencyKey("capacity_post"),
   createValidators,
   validate,
   async (req, res) => {
@@ -176,13 +179,30 @@ router.post(
       ]
     );
 
-    await notifyUser({
+    void notifyUser({
       receiverId: req.auth.userId,
       senderId: req.auth.userId,
       roleType: "carrier",
       title: "SPACE_LISTED",
       type: "SPACE_LISTED",
       message: `Capacity listed: ${origin} → ${destination}`
+    });
+
+    emitContractDispatch({
+      eventId: newEventId(),
+      type: "SPACE_LISTED",
+      receiverId: req.auth.userId,
+      roleType: "carrier",
+      entityType: "space",
+      entityId: rows[0].id,
+      payload: { listingId: rows[0].id, origin, destination, status: "open" }
+    });
+    emitContractEntityDispatch({
+      entityType: "space",
+      entityId: rows[0].id,
+      type: "SPACE_LISTED",
+      eventId: newEventId(),
+      payload: { listingId: rows[0].id, origin, destination }
     });
 
     void notifyAdmins({
@@ -360,6 +380,21 @@ router.delete(
       [id, req.auth.userId]
     );
     if (!found[0]) return sendError(res, 404, "Not found");
+    const { rows: activeAgreements } = await dbQuery(
+      `SELECT 1 FROM carrier_space_requests
+       WHERE listing_id = $1 AND status IN ('active', 'in_transit')
+       LIMIT 1`,
+      [id]
+    );
+    if (activeAgreements.length) {
+      return sendError(
+        res,
+        409,
+        "Listing has an active agreement and cannot be deleted",
+        null,
+        "LISTING_ACTIVE"
+      );
+    }
     const { rowCount } = await dbQuery(
       `DELETE FROM carrier_space_listings WHERE id = $1 AND carrier_id = $2`,
       [id, req.auth.userId]

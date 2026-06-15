@@ -20,7 +20,12 @@ const {
   COMMERCIAL_BID_VISIBLE_SQL,
   assertCounterLimit
 } = require("../utils/bidStateMachine");
-const { emitBidStateChange, emitBidRefresh, BID_DISPATCH } = require("../utils/bidRealtime");
+const {
+  emitBidStateChange,
+  emitBidRefresh,
+  emitBidAcceptMarketplaceFanout,
+  BID_DISPATCH
+} = require("../utils/bidRealtime");
 const { notifyAdmins } = require("../utils/notifyEvent");
 const { buildDedupeKey, newEventId } = require("../utils/realtimeDispatch");
 const { emitContractEntityDispatch } = require("../utils/eventContractRegistry");
@@ -782,6 +787,14 @@ router.put(
       emitBidRefresh(bid.carrier_id, "carrier", BID_DISPATCH.ACCEPTED, {
         bidId,
         loadId: bid.load_id,
+        loadCode: bid.load_code || null
+      });
+
+      void emitBidAcceptMarketplaceFanout({
+        loadId: bid.load_id,
+        winningBidId: bidId,
+        winningCarrierId: bid.carrier_id,
+        shipperId: bid.shipper_id,
         loadCode: bid.load_code || null
       });
 

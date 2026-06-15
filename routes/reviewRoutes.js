@@ -31,6 +31,31 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
     const uid = String(req.auth.userId);
     const pending = [];
 
+    let dismissedKeys = new Set();
+    try {
+      const { rows: userRows } = await query(
+        `SELECT COALESCE(review_prompt_dismissed, '[]'::jsonb) AS dismissed
+         FROM users WHERE id = $1`,
+        [uid]
+      );
+      const dismissedRaw = userRows[0]?.dismissed;
+      dismissedKeys = new Set(
+        Array.isArray(dismissedRaw)
+          ? dismissedRaw.map((k) => String(k))
+          : dismissedRaw && typeof dismissedRaw === "object"
+            ? Object.values(dismissedRaw).map((k) => String(k))
+            : []
+      );
+    } catch {
+      dismissedKeys = new Set();
+    }
+
+    function isDismissed(kind, id) {
+      if (!id) return false;
+      const key = kind === "space" ? `space:${id}` : `load:${id}`;
+      return dismissedKeys.has(key);
+    }
+
     const { rows: shipRows } = await query(
       `SELECT l.id AS "loadId", l.code AS "loadCode",
               CASE WHEN l.shipper_id = $1 THEN l.assigned_carrier_id ELSE l.shipper_id END AS "toUserId",
@@ -56,6 +81,7 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
     );
     for (const row of shipRows) {
       if (!row.toUserId) continue;
+      if (isDismissed("load", row.loadId)) continue;
       pending.push({
         kind: "shipment",
         loadId: row.loadId,
@@ -101,6 +127,7 @@ router.get("/pending", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, re
     );
     for (const row of spaceRows) {
       if (!row.toUserId) continue;
+      if (isDismissed("space", row.spaceRequestId)) continue;
       pending.push({
         kind: "space",
         spaceRequestId: row.spaceRequestId,
@@ -248,7 +275,7 @@ router.post(
         ? "shipper"
         : "shipper";
 
-    await notifyUser({
+    void notifyUser({
       receiverId: toUserId,
       senderId: req.auth.userId,
       roleType: receiverRole,
@@ -276,6 +303,63 @@ router.post(
     return sendSuccess(res, 201, rows[0], "Submitted");
   }
 );
+
+router.post(
+  "/dismiss",
+  protect,
+  requireAnyRole(COMMERCIAL_ROLES),
+  [
+    body("loadId").optional().custom((v) => (v == null || v === "" || isUuid(v) ? true : (() => { throw new Error("Invalid loadId"); })())),
+    body("spaceRequestId")
+      .optional()
+      .custom((v) => (v == null || v === "" || isUuid(v) ? true : (() => { throw new Error("Invalid spaceRequestId"); })()))
+  ],
+  validate,
+  async (req, res) => {
+    const { loadId, spaceRequestId } = req.body || {};
+    let key = null;
+    if (spaceRequestId) key = `space:${spaceRequestId}`;
+    else if (loadId) key = `load:${loadId}`;
+    else return sendError(res, 400, "loadId or spaceRequestId required");
+    try {
+      await query(
+        `UPDATE users
+         SET review_prompt_dismissed = CASE
+           WHEN COALESCE(review_prompt_dismissed, '[]'::jsonb) @> to_jsonb($2::text)
+           THEN review_prompt_dismissed
+           ELSE COALESCE(review_prompt_dismissed, '[]'::jsonb) || to_jsonb($2::text)
+         END
+         WHERE id = $1`,
+        [req.auth.userId, key]
+      );
+      return sendSuccess(res, 200, { ok: true, key });
+    } catch (err) {
+      return sendError(res, 500, err.message || "Server error");
+    }
+  }
+);
+
+router.get("/dismissed", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT COALESCE(review_prompt_dismissed, '[]'::jsonb) AS dismissed
+       FROM users WHERE id = $1`,
+      [req.auth.userId]
+    );
+    const raw = rows[0]?.dismissed;
+    const keys = Array.isArray(raw)
+      ? raw.map((k) => String(k))
+      : raw && typeof raw === "object"
+        ? Object.values(raw).map((k) => String(k))
+        : [];
+    return sendSuccess(res, 200, { keys });
+  } catch (err) {
+    if (String(err?.message || "").includes("review_prompt_dismissed")) {
+      return sendSuccess(res, 200, { keys: [] });
+    }
+    return sendError(res, 500, err.message || "Server error");
+  }
+});
 
 router.get("/summary", protect, requireAnyRole(COMMERCIAL_ROLES), async (req, res) => {
   try {

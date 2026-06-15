@@ -13,6 +13,7 @@ const { parseDeadlineMinutesFromBody } = require("../utils/loadDeadline");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { persistLoadRouteSnapshot } = require("../utils/loadRouteSnapshot");
 const { writeAudit } = require("../utils/auditLog");
+const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 const { requireLoadRead, requireLoadShipperMutate } = require("../middleware/authorizeResource");
 
 const router = express.Router();
@@ -300,6 +301,23 @@ async function createLoad(req, res) {
   }
 
   const code = generateCode();
+
+  const cargoNorm = String(cargo || "Load").trim();
+  const { rows: dupRows } = await query(
+    `SELECT id FROM loads
+     WHERE shipper_id = $1
+       AND lower(trim(origin)) = lower(trim($2))
+       AND lower(trim(destination)) = lower(trim($3))
+       AND pickup_date = $4::date
+       AND lower(trim(cargo)) = lower(trim($5))
+       AND created_at > now() - interval '60 seconds'
+     LIMIT 1`,
+    [req.auth.userId, pickupLoc, dropLoc, pickup, cargoNorm]
+  );
+  if (dupRows[0]) {
+    return sendError(res, 409, "Duplicate load detected — wait before posting again", null, "DUPLICATE_LOAD");
+  }
+
   const { rows } = await query(
     `INSERT INTO loads
        (code, shipper_id, cargo, origin, destination, weight, vehicle_type, expected_price, pickup_date, deadline_hours, deadline_minutes, status,
@@ -436,6 +454,7 @@ router.post(
   "/",
   protect,
   requireRole("shipper"),
+  withIdempotencyKey("load_post"),
   createLoadValidators,
   validate,
   asyncHandler(createLoad)
@@ -444,6 +463,7 @@ router.post(
   "/create",
   protect,
   requireRole("shipper"),
+  withIdempotencyKey("load_post"),
   createLoadValidators,
   validate,
   asyncHandler(createLoad)

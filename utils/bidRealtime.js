@@ -52,8 +52,68 @@ function emitBidRefresh(userId, roleType, dispatchType = BID_DISPATCH.UPDATED, p
   }
 }
 
+/** Notify losing bidders + refresh marketplace after accept (no refresh required on clients). */
+async function emitBidAcceptMarketplaceFanout({
+  loadId,
+  winningBidId,
+  winningCarrierId,
+  shipperId,
+  loadCode
+}) {
+  if (!loadId) return;
+  const { query } = require("../db/pool");
+  const { rows } = await query(
+    `SELECT DISTINCT b.carrier_id AS "carrierId"
+     FROM bids b
+     WHERE b.load_id = $1
+       AND b.id <> $2
+       AND b.carrier_id IS NOT NULL
+       AND b.carrier_id <> $3`,
+    [loadId, winningBidId, winningCarrierId]
+  );
+
+  const payload = { loadId, loadCode: loadCode || null, loadFlowStatus: "BOOKED" };
+
+  for (const row of rows) {
+    const carrierId = String(row.carrierId || "");
+    if (!carrierId) continue;
+    void emitBidStateChange({
+      receiverId: carrierId,
+      senderId: shipperId,
+      roleType: "carrier",
+      dispatchType: BID_DISPATCH.REJECTED,
+      title: "LOAD_BOOKED",
+      message: "This load was booked by another carrier."
+    });
+    emitBidRefresh(carrierId, "carrier", BID_DISPATCH.REJECTED, payload);
+    emitBidRefresh(carrierId, "carrier", "LOAD_ACCEPTED", payload);
+  }
+
+  emitContractDispatch({
+    eventId: newEventId(),
+    type: "LOAD_ACCEPTED",
+    receiverId: winningCarrierId,
+    roleType: "carrier",
+    entityType: "load",
+    entityId: loadId,
+    payload
+  });
+  if (shipperId) {
+    emitContractDispatch({
+      eventId: newEventId(),
+      type: "LOAD_ACCEPTED",
+      receiverId: shipperId,
+      roleType: "shipper",
+      entityType: "load",
+      entityId: loadId,
+      payload
+    });
+  }
+}
+
 module.exports = {
   BID_DISPATCH,
   emitBidStateChange,
-  emitBidRefresh
+  emitBidRefresh,
+  emitBidAcceptMarketplaceFanout
 };

@@ -2,6 +2,8 @@ const { param, query: qv, validationResult } = require("express-validator");
 const { sendSuccess, sendError } = require("../../utils/apiResponse");
 const { writeAudit } = require("../../utils/auditLog");
 const { notifyUser } = require("../../utils/notifyEvent");
+const { emitContractDispatch } = require("../../utils/eventContractRegistry");
+const { newEventId } = require("../../utils/realtimeDispatch");
 const {
   TRUCK_STATUS,
   hasRequiredDocuments,
@@ -77,7 +79,16 @@ async function approve(req, res) {
     targetId: truckId,
     metadata: { carrierId: truck.user_id }
   });
-  await notifyUser({
+  emitContractDispatch({
+    eventId: newEventId(),
+    type: "TRUCK_APPROVED",
+    receiverId: truck.user_id,
+    roleType: "carrier",
+    entityType: "truck",
+    entityId: truckId,
+    payload: { truckId, status: TRUCK_STATUS.APPROVED }
+  });
+  void notifyUser({
     receiverId: truck.user_id,
     senderId: req.auth.userId,
     roleType: "carrier",
@@ -105,7 +116,16 @@ async function reject(req, res) {
     targetId: truckId,
     metadata: { carrierId: truck.user_id, reason: String(req.body?.reason || "").slice(0, 200) }
   });
-  await notifyUser({
+  emitContractDispatch({
+    eventId: newEventId(),
+    type: "TRUCK_REJECTED",
+    receiverId: truck.user_id,
+    roleType: "carrier",
+    entityType: "truck",
+    entityId: truckId,
+    payload: { truckId, status: TRUCK_STATUS.SUSPENDED }
+  });
+  void notifyUser({
     receiverId: truck.user_id,
     senderId: req.auth.userId,
     roleType: "carrier",
@@ -133,7 +153,16 @@ async function suspend(req, res) {
     targetId: truckId,
     metadata: { carrierId: truck.user_id, reason: String(req.body?.reason || "").slice(0, 200) }
   });
-  await notifyUser({
+  emitContractDispatch({
+    eventId: newEventId(),
+    type: "TRUCK_SUSPENDED",
+    receiverId: truck.user_id,
+    roleType: "carrier",
+    entityType: "truck",
+    entityId: truckId,
+    payload: { truckId, status: TRUCK_STATUS.SUSPENDED }
+  });
+  void notifyUser({
     receiverId: truck.user_id,
     senderId: req.auth.userId,
     roleType: "carrier",

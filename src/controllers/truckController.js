@@ -323,6 +323,16 @@ async function remove(req, res) {
     return sendForbidden(res, "You do not own this truck", FORBIDDEN_CODES.FORBIDDEN_OWNER);
   }
 
+  if (isApprovedForMatching(truck.status)) {
+    return sendError(
+      res,
+      409,
+      "Approved trucks cannot be deleted — contact support if you need changes",
+      null,
+      "TRUCK_APPROVED_LOCKED"
+    );
+  }
+
   const approvedCount = await fleetRepo.countApprovedTrucks(req.auth.userId);
   if (isApprovedForMatching(truck.status) && approvedCount <= 1) {
     return sendError(
