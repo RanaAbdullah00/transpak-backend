@@ -22,6 +22,7 @@ describe("Phase 7 Enterprise — strict distributed mode", () => {
     assert.ok(read("utils/distributedMode.js").includes("ENABLE_STRICT_DISTRIBUTED"));
     assert.ok(read("utils/distributedBootstrapGuard.js").includes("runDistributedBootstrapGuard"));
     assert.ok(read("utils/redisClient.js").includes("requiresRedis"));
+    assert.ok(read("middleware/causalValidation.js").includes("../utils/distributedMode"));
   });
 
   it("health exposes distributed block", () => {

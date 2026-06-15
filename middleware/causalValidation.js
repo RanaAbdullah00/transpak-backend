@@ -2,9 +2,9 @@
  * Phase 7 — causal validation helpers for tracking writes.
  */
 const { query } = require("../db/pool");
-const { requiresRedis, isStrictDistributedEnabled } = require("./distributedMode");
-const { prepareTrackingEvent } = require("./consistencyEngine");
-const { CAUSALITY_TYPES } = require("./causalEventGraph");
+const { requiresRedis, isStrictDistributedEnabled } = require("../utils/distributedMode");
+const { prepareTrackingEvent } = require("../utils/consistencyEngine");
+const { CAUSALITY_TYPES } = require("../utils/causalEventGraph");
 
 function shouldReconstructOrphans() {
   if (String(process.env.CAUSAL_RECONSTRUCT_ORPHANS || "").trim().toLowerCase() === "true") {
