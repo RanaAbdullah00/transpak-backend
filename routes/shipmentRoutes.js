@@ -30,6 +30,7 @@ const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 const { publishTrackingEvent } = require("../utils/trackingEventPublisher");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 const { writeAudit } = require("../utils/auditLog");
+const { invalidateAdminDashboardCache } = require("../utils/adminDashboardCache");
 const {
   hasAdminRole,
   assertShipmentParties,
@@ -571,6 +572,7 @@ router.put(
           metadata: { loadId: load.id, status: canonical }
         });
       }
+      invalidateAdminDashboardCache();
       return sendSuccess(res, 200, payload);
     } catch (err) {
       const status = err.statusCode || 500;

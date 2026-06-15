@@ -47,6 +47,7 @@ describe("Performance safety (HTTP timing)", { skip: hasIntegrationEnv() ? false
 
 describe("Admin dashboard timing", { skip: skipAdminReason() }, () => {
   const MAX_MS = Number(process.env.TEST_ADMIN_MAX_MS || 15000);
+  const WARM_MAX_MS = Number(process.env.TEST_ADMIN_WARM_MAX_MS || 10000);
 
   it("GET /admin/dashboard/live within budget", async () => {
     const admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
@@ -56,6 +57,26 @@ describe("Admin dashboard timing", { skip: skipAdminReason() }, () => {
     assert.ok(res.ok, res.message);
     assert.ok(ms < MAX_MS, `admin live dashboard took ${ms}ms`);
     assert.ok(res.payload?.stats);
+  });
+
+  it("GET /admin/dashboard/live warm response within budget", async () => {
+    const admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
+    await api("GET", "/api/admin/dashboard/live", { token: admin.token });
+    const t0 = Date.now();
+    const res = await api("GET", "/api/admin/dashboard/live", { token: admin.token });
+    const ms = Date.now() - t0;
+    assert.ok(res.ok, res.message);
+    assert.ok(ms < WARM_MAX_MS, `admin live dashboard warm took ${ms}ms`);
+  });
+
+  it("GET /admin/dashboard/widgets/loads within budget", async () => {
+    const admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
+    const t0 = Date.now();
+    const res = await api("GET", "/api/admin/dashboard/widgets/loads", { token: admin.token });
+    const ms = Date.now() - t0;
+    assert.ok(res.ok, res.message);
+    assert.ok(ms < WARM_MAX_MS, `admin loads widget took ${ms}ms`);
+    assert.equal(res.payload?.widget, "loads");
   });
 });
 

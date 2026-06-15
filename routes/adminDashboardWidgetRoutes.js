@@ -3,6 +3,8 @@ const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { asyncHandler } = require("../utils/asyncHandler");
 const { fetchWidgetByName, WIDGET_FETCHERS } = require("../utils/adminDashboardWidgets");
 
+const SLOW_MS = Number(process.env.ADMIN_TELEMETRY_SLOW_MS || 1000);
+
 const router = express.Router();
 
 const WIDGET_NAMES = Object.keys(WIDGET_FETCHERS);
@@ -23,6 +25,13 @@ router.get(
     }
 
     const result = await fetchWidgetByName(widget);
+    if (result.durationMs > SLOW_MS && process.env.NODE_ENV !== "test") {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[admin/dashboard/widgets/${widget}] slow ${result.durationMs}ms` +
+          (result.cached ? " (cached)" : "")
+      );
+    }
     if (!result.ok) {
       return sendSuccess(res, 200, {
         ok: false,

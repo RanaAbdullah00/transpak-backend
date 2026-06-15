@@ -10,6 +10,7 @@ const {
   apiTruckStatus
 } = require("../../utils/truckLifecycle");
 const fleetRepo = require("../../utils/fleetRepo");
+const { invalidateAdminDashboardCache } = require("../../utils/adminDashboardCache");
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -96,6 +97,7 @@ async function approve(req, res) {
     type: "TRUCK_APPROVED",
     message: "Your truck registration was approved — you can bid on matching loads"
   });
+  invalidateAdminDashboardCache();
   return sendSuccess(res, 200, { ok: true, statusLabel: "APPROVED", id: updated?.id });
 }
 

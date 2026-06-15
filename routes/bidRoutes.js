@@ -27,6 +27,7 @@ const {
   BID_DISPATCH
 } = require("../utils/bidRealtime");
 const { notifyAdmins } = require("../utils/notifyEvent");
+const { invalidateAdminDashboardCache } = require("../utils/adminDashboardCache");
 const { buildDedupeKey, newEventId } = require("../utils/realtimeDispatch");
 const { emitContractEntityDispatch } = require("../utils/eventContractRegistry");
 const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
@@ -747,6 +748,8 @@ router.put(
       await ensureShipmentBookedEvent(client, { loadId: bid.load_id, note: null });
 
       await client.query("COMMIT");
+
+      invalidateAdminDashboardCache();
 
       void writeAudit({
         actorUserId: req.auth.userId,

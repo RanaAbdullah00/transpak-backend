@@ -2,6 +2,7 @@ const { query } = require("../db/pool");
 const { safeCount, pingDatabase } = require("./adminStats");
 const { recordAdminTelemetry, getAdminTelemetrySnapshot } = require("./adminTelemetry");
 const realtimeHub = require("../services/realtimeHub");
+const { getCachedWidget, setCachedWidget } = require("./adminDashboardCache");
 
 async function runWidget(widget, fn) {
   const start = Date.now();
@@ -196,12 +197,16 @@ async function fetchAuditWidget() {
 async function fetchObservabilityWidget() {
   return runWidget("observability", async () => {
     const dbReachable = await pingDatabase();
+    const onlineCarriers = await safeCount(
+      `SELECT COUNT(DISTINCT user_id)::int AS c FROM trucks WHERE status = 'approved'`
+    );
     return {
       meta: { dbReachable },
       observability: {
         uptimeSeconds: Math.floor(process.uptime()),
         serverStartedAt: global.__TRANSPAK_SERVER_STARTED_AT || new Date().toISOString(),
         websocketConnections: realtimeHub.getConnectedSocketCount(),
+        onlineCarriers: onlineCarriers === null ? 0 : onlineCarriers,
         telemetryRecent: getAdminTelemetrySnapshot(30),
         ops: require("./opsTelemetry").getOpsSnapshot({ includeRecent: true })
       }
@@ -219,9 +224,20 @@ const WIDGET_FETCHERS = {
 };
 
 async function fetchWidgetByName(name) {
-  const fn = WIDGET_FETCHERS[name];
-  if (!fn) return { ok: false, widget: name, error: { code: "UNKNOWN_WIDGET" }, data: null };
-  return fn();
+  const widget = String(name || "").trim().toLowerCase();
+  const fn = WIDGET_FETCHERS[widget];
+  if (!fn) return { ok: false, widget, error: { code: "UNKNOWN_WIDGET" }, data: null };
+
+  const cached = getCachedWidget(widget);
+  if (cached?.result) {
+    return { ...cached.result, durationMs: 0, cached: true };
+  }
+
+  const result = await fn();
+  if (result.ok) {
+    setCachedWidget(widget, { result });
+  }
+  return result;
 }
 
 module.exports = {

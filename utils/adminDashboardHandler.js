@@ -2,10 +2,30 @@ const { query } = require("../db/pool");
 const { sendSuccess } = require("./apiResponse");
 const { asyncHandler } = require("./asyncHandler");
 const realtimeHub = require("../services/realtimeHub");
+const { getCachedWidget, setCachedWidget } = require("./adminDashboardCache");
+
+const LIVE_CACHE_KEY = "live";
+
+function logDashboardLive(meta) {
+  if (process.env.NODE_ENV === "test") return;
+  // eslint-disable-next-line no-console
+  console.log("[admin/dashboard/live]", JSON.stringify(meta));
+}
 
 const getAdminDashboardLive = asyncHandler(async (req, res) => {
-  const { runMarketplaceExpiryProcessor } = require("./loadExpiry");
-  await runMarketplaceExpiryProcessor().catch(() => ({ loadsExpired: 0, bidsExpired: 0 }));
+  const started = Date.now();
+  const reqId = String(req.headers["x-request-id"] || req.id || "").slice(0, 12) || "n/a";
+
+  const cached = getCachedWidget(LIVE_CACHE_KEY);
+  if (cached?.payload) {
+    logDashboardLive({
+      reqId,
+      durationMs: Date.now() - started,
+      cache: "hit",
+      partialFailure: cached.payload?.meta?.partialFailure ?? false
+    });
+    return sendSuccess(res, 200, cached.payload);
+  }
 
   const { fetchAdminLiveStats } = require("./adminStats");
   const liveStats = await fetchAdminLiveStats();
@@ -70,7 +90,7 @@ const getAdminDashboardLive = asyncHandler(async (req, res) => {
       .catch(() => [])
   ]);
 
-  return sendSuccess(res, 200, {
+  const payload = {
     meta: {
       dbReachable: liveStats.dbReachable,
       partialFailure: liveStats.partialFailure
@@ -88,7 +108,24 @@ const getAdminDashboardLive = asyncHandler(async (req, res) => {
     recentDisputes,
     recentNotifications,
     auditEvents
+  };
+
+  setCachedWidget(LIVE_CACHE_KEY, { payload });
+
+  logDashboardLive({
+    reqId,
+    durationMs: Date.now() - started,
+    cache: "miss",
+    partialFailure: liveStats.partialFailure,
+    counts: {
+      recentLoads: recentLoads.length,
+      recentBids: recentBids.length,
+      recentShipments: recentShipments.length,
+      auditEvents: auditEvents.length
+    }
   });
+
+  return sendSuccess(res, 200, payload);
 });
 
 module.exports = { getAdminDashboardLive };
