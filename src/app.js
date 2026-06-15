@@ -271,16 +271,13 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
 
   app.use("/api", (req, res, next) => {
     if (req.method === "OPTIONS") return next();
-    if (req.path === "/health") return next();
-    if (req.path === "/system/policy-health") return next();
+    const { isDbGateExemptPath } = require("../utils/dbGatePolicy");
+    if (isDbGateExemptPath(req.path)) return next();
     if (dbState?.ready) return next();
     const lastErr = dbState?.error;
     const isProd = process.env.NODE_ENV === "production";
     const booting = !dbState?.initSettled;
-    if (req.path === "/auth/login" && booting) {
-      // eslint-disable-next-line no-console
-      console.warn("[db] login blocked — service still booting");
-    } else if (!isProd && lastErr) {
+    if (!isProd && lastErr) {
       // eslint-disable-next-line no-console
       console.error("[db] request blocked (DB not ready):", req.method, req.originalUrl, lastErr?.message || lastErr);
     }
