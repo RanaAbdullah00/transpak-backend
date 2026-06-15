@@ -109,4 +109,26 @@ describe("Migration system architecture", () => {
     assert.equal(commitsMatch(full, short), true);
     assert.equal(commitsMatch(full, "deadbeef0000"), false);
   });
+
+  it("all incremental migration SQL files are registered in migrate.js", () => {
+    const { INCREMENTAL_MIGRATIONS } = require(path.join(root, "db", "migrate.js"));
+    const migDir = path.join(root, "db", "migrations");
+    const onDisk = fs
+      .readdirSync(migDir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+    const registered = new Set(INCREMENTAL_MIGRATIONS);
+    const missing = onDisk.filter((f) => !registered.has(f));
+    const orphan = INCREMENTAL_MIGRATIONS.filter((f) => !fs.existsSync(path.join(migDir, f)));
+    assert.deepEqual(
+      missing,
+      [],
+      `migration files on disk not in INCREMENTAL_MIGRATIONS: ${missing.join(", ")}`
+    );
+    assert.deepEqual(
+      orphan,
+      [],
+      `INCREMENTAL_MIGRATIONS entries missing SQL file: ${orphan.join(", ")}`
+    );
+  });
 });

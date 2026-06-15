@@ -35,7 +35,10 @@ const INCREMENTAL_MIGRATIONS = [
   "024_truck_status_constraint_reconcile.sql",
   "025_capacity_shipment_bridge.sql",
   "026_loads_booking_reference.sql",
-  "026_carrier_space_availability_slots.sql"
+  "026_carrier_space_availability_slots.sql",
+  "027_phase6_distributed.sql",
+  "028_phase7_causal_tracing_alerts.sql",
+  "029_review_prompt_dismissed.sql"
 ];
 
 const ALL_MIGRATIONS = [BASELINE_MIGRATION, ...INCREMENTAL_MIGRATIONS];
