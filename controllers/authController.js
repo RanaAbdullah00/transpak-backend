@@ -280,6 +280,7 @@ async function register(req, res) {
 }
 
 async function login(req, res) {
+  const loginStarted = Date.now();
   try {
     const maybeError = validationErrorResponse(req, res);
     if (maybeError) return maybeError;
@@ -288,7 +289,13 @@ async function login(req, res) {
     const normalizedEmail = String(email || "").trim().toLowerCase();
     const roleHint = String(bodyRoleHint || bodyRole || "").trim().toLowerCase();
 
+    // eslint-disable-next-line no-console
+    console.log("[auth.login] start", { email: normalizedEmail });
+
+    const lookupStarted = Date.now();
     const row = await withDbRetry(() => userRepo.findRowByEmailWithPassword(normalizedEmail));
+    // eslint-disable-next-line no-console
+    console.log("[auth.login] db_lookup_ms", Date.now() - lookupStarted);
     if (!row) {
       return sendError(res, 401, "Invalid username", null, "USER_NOT_FOUND");
     }
@@ -366,11 +373,18 @@ async function login(req, res) {
       console.error("[auth.login] login notification failed:", notifyErr?.message || notifyErr);
     }
 
+    // eslint-disable-next-line no-console
+    console.log("[auth.login] complete", { status: 200, ms: Date.now() - loginStarted });
     return sendSuccess(res, 200, loginAuthData(sessionUser, token), "Logged in");
   } catch (err) {
     const classified = classifyDbError(err);
     // eslint-disable-next-line no-console
-    console.error("[auth.login]", classified.log || err?.message || err, err?.code || "");
+    console.error(
+      "[auth.login] fail",
+      classified.code || "SERVER_ERROR",
+      classified.log || err?.message || err,
+      { ms: Date.now() - loginStarted }
+    );
     if (classified.code !== "SERVER_ERROR") {
       return sendError(res, classified.status, classified.message, null, classified.code);
     }

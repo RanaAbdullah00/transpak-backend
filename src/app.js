@@ -276,22 +276,31 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
     if (dbState?.ready) return next();
     const lastErr = dbState?.error;
     const isProd = process.env.NODE_ENV === "production";
-    if (!isProd && lastErr) {
+    const booting = !dbState?.initSettled;
+    if (req.path === "/auth/login" && booting) {
+      // eslint-disable-next-line no-console
+      console.warn("[db] login blocked — service still booting");
+    } else if (!isProd && lastErr) {
       // eslint-disable-next-line no-console
       console.error("[db] request blocked (DB not ready):", req.method, req.originalUrl, lastErr?.message || lastErr);
     }
+    const code = booting ? "SERVICE_BOOTING" : "DATABASE_UNAVAILABLE";
+    const message = booting
+      ? "Service is starting, try again shortly"
+      : isProd
+        ? "Service temporarily unavailable"
+        : "Database unavailable. Set DATABASE_URL on Render (Supabase Session pooler URI) and run: npm run db:migrate";
     return res.status(503).json({
       success: false,
-      message: isProd
-        ? "Service temporarily unavailable"
-        : "Database unavailable. Set DATABASE_URL on Render (Supabase Session pooler URI) and run: npm run db:migrate",
-      code: "DATABASE_UNAVAILABLE",
+      message,
+      code,
       data: isProd
         ? null
         : {
             databaseUrlConfigured: isDatabaseUrlConfigured(),
             hint: "transpak-backend: npm run db:migrate",
-            lastError: lastErr?.message || String(lastErr || "")
+            lastError: lastErr?.message || String(lastErr || ""),
+            booting
           }
     });
   });
