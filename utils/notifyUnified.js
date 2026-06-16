@@ -5,7 +5,7 @@ const { notifyAdmins: notifyAdminsDirect } = require("./adminNotify");
 /**
  * All persisted notifications must use a registry event type.
  * @param {string} event
- * @param {{ receiverId, senderId?, roleType, title?, message, idempotencyKey? }} payload
+ * @param {{ receiverId, senderId?, roleType, title?, message, idempotencyKey?, entityId?, eventVersion? }} payload
  */
 async function notifyUnified(event, payload) {
   const type = assertEventType(event);
@@ -17,7 +17,9 @@ async function notifyUnified(event, payload) {
     title: payload.title || type,
     type,
     message: payload.message,
-    idempotencyKey: payload.idempotencyKey
+    idempotencyKey: payload.idempotencyKey,
+    entityId: payload.entityId,
+    eventVersion: payload.eventVersion
   });
 }
 

@@ -203,15 +203,17 @@ async function acceptBidAndBook(bidId, actorUserId, { allowCarrierListedAccept =
       roleType: "carrier",
       dispatchType: BID_DISPATCH.ACCEPTED,
       title: "BID_ACCEPTED",
-      message: "Your bid was accepted. Contract is active."
+      message: "Your bid was accepted. Contract is active.",
+      entityId: bidId
     });
     void emitBidStateChange({
       receiverId: bid.shipper_id,
       senderId: bid.carrier_id,
       roleType: "shipper",
-      dispatchType: BID_DISPATCH.ACCEPTED,
+      dispatchType: "CONTRACT_STARTED",
       title: "CONTRACT_STARTED",
-      message: "Load booked. You can now contact the carrier."
+      message: "Load booked. You can now contact the carrier.",
+      entityId: bidId
     });
     emitBidRefresh(actorUserId, isCarrierActor ? "carrier" : "shipper", BID_DISPATCH.ACCEPTED, {
       bidId,

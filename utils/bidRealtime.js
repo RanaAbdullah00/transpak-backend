@@ -1,6 +1,7 @@
 const { notifyUnified } = require("./notifyUnified");
 const { emitContractDispatch, emitContractEntityDispatch } = require("./eventContractRegistry");
 const { newEventId } = require("./realtimeDispatch");
+const { buildEventDedupeKey } = require("./notificationDedupeAdapter");
 
 const BID_DISPATCH = {
   CREATED: "BID_CREATED",
@@ -17,15 +18,24 @@ async function emitBidStateChange({
   roleType,
   dispatchType,
   title,
-  message
+  message,
+  entityId,
+  eventVersion,
+  idempotencyKey
 }) {
   if (!receiverId || !roleType || !dispatchType) return null;
+  const resolvedKey =
+    idempotencyKey ||
+    (entityId ? buildEventDedupeKey(dispatchType, entityId, receiverId, eventVersion) : null);
   return notifyUnified(dispatchType, {
     receiverId,
     senderId: senderId || null,
     roleType,
     title: title || dispatchType,
-    message: message || title || dispatchType
+    message: message || title || dispatchType,
+    entityId,
+    eventVersion,
+    idempotencyKey: resolvedKey
   });
 }
 
@@ -83,7 +93,9 @@ async function emitBidAcceptMarketplaceFanout({
       roleType: "carrier",
       dispatchType: BID_DISPATCH.REJECTED,
       title: "LOAD_BOOKED",
-      message: "This load was booked by another carrier."
+      message: "This load was booked by another carrier.",
+      entityId: loadId,
+      eventVersion: winningBidId
     });
     emitBidRefresh(carrierId, "carrier", BID_DISPATCH.REJECTED, payload);
     emitBidRefresh(carrierId, "carrier", "LOAD_ACCEPTED", payload);

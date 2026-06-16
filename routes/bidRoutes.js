@@ -238,7 +238,8 @@ router.post(
         roleType: "shipper",
         dispatchType: BID_DISPATCH.CREATED,
         title: "SHIPPER_CONFIRMATION_REQUEST",
-        message: `Carrier bid PKR ${Number(amount)} — confirm to book`
+        message: `Carrier bid PKR ${Number(amount)} — confirm to book`,
+        entityId: rows[0].id
       });
     }
     emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.CREATED, { bidId: rows[0].id, loadId });
@@ -338,7 +339,8 @@ router.put(
           roleType: "carrier",
           dispatchType: BID_DISPATCH.REJECTED,
           title: "BID_REJECTED",
-          message: "Your bid was declined by the shipper"
+          message: "Your bid was declined by the shipper",
+          entityId: bidId
         });
       }
       emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.REJECTED, { bidId });
@@ -431,7 +433,9 @@ router.put(
         roleType: "carrier",
         dispatchType: BID_DISPATCH.COUNTER,
         title: "COUNTER_OFFERED",
-        message: `Shipper counter offer: PKR ${amount}`
+        message: `Shipper counter offer: PKR ${amount}`,
+        entityId: bidId,
+        eventVersion: `shipper-${amount}`
       });
       emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.COUNTER, { bidId });
       void notifyAdmins({
@@ -532,7 +536,9 @@ router.put(
         roleType: "shipper",
         dispatchType: BID_DISPATCH.COUNTER,
         title: "COUNTER_OFFERED",
-        message: `Carrier counter offer: PKR ${amount}`
+        message: `Carrier counter offer: PKR ${amount}`,
+        entityId: bidId,
+        eventVersion: `carrier-${amount}`
       });
       emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.COUNTER, { bidId });
       void notifyAdmins({
@@ -596,7 +602,9 @@ router.put(
         roleType: "shipper",
         dispatchType: BID_DISPATCH.UPDATED,
         title: "SHIPPER_CONFIRMATION_REQUEST",
-        message: `Carrier accepted your counter — PKR ${Number(meta[0].amount || 0)}`
+        message: `Carrier accepted your counter — PKR ${Number(meta[0].amount || 0)}`,
+        entityId: bidId,
+        eventVersion: "counter-accepted"
       });
     }
     emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.UPDATED, { bidId });
@@ -632,7 +640,9 @@ router.put(
         roleType: "shipper",
         dispatchType: BID_DISPATCH.UPDATED,
         title: "BID_UPDATED",
-        message: "Carrier declined your counter offer"
+        message: "Carrier declined your counter offer",
+        entityId: bidId,
+        eventVersion: "counter-declined"
       });
     }
     emitBidRefresh(req.auth.userId, "carrier", BID_DISPATCH.UPDATED, { bidId });

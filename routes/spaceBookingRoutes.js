@@ -287,7 +287,9 @@ async function transitionRequest(req, res, nextStatus) {
       roleType: "shipper",
       title: dispatchType,
       type: dispatchType,
-      message: `${msgBase}${refSuffix}: ${row.origin} → ${row.destination}`
+      message: `${msgBase}${refSuffix}: ${row.origin} → ${row.destination}`,
+      entityId: requestId,
+      eventVersion: nextStatus
     });
 
     if (shipmentBridge) {
@@ -313,7 +315,8 @@ async function transitionRequest(req, res, nextStatus) {
         title: "CONTRACT_STARTED",
         type: "CONTRACT_STARTED",
         message: `Capacity contract is now active${refSuffix}: ${row.origin} → ${row.destination}`,
-        idempotencyKey: buildDedupeKey(["CONTRACT_STARTED", "carrier", requestId, shipmentBridge.loadId])
+        entityId: requestId,
+        eventVersion: shipmentBridge.shipmentId || shipmentBridge.loadId
       });
       emitContractDispatch({
         eventId: newEventId(),

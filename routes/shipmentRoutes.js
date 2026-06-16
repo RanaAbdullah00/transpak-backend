@@ -481,7 +481,9 @@ router.put(
             roleType: "shipper",
             title: notifyMeta.title,
             type: notifyMeta.type,
-            message: msg
+            message: msg,
+            entityId: shipment.id,
+            eventVersion: canonical
           });
           emitContractDispatch({
             eventId: newEventId(),
@@ -509,7 +511,9 @@ router.put(
             roleType: "carrier",
             title: notifyMeta.title,
             type: notifyMeta.type,
-            message: msg
+            message: msg,
+            entityId: shipment.id,
+            eventVersion: canonical
           });
           emitContractDispatch({
             eventId: newEventId(),

@@ -2,9 +2,33 @@
  * Phase 6 — notification dedupe adapter (Redis primary, in-memory fallback).
  */
 const { getRedisClient } = require("./redisClient");
+const { buildDedupeKey } = require("./realtimeDispatch");
 
 const DEDUPE_WINDOW_MS = Number(process.env.NOTIFY_DEDUPE_MS || 120000);
 const REDIS_TTL_SEC = Number(process.env.NOTIFY_DEDUPE_REDIS_TTL_SEC || 180);
+
+/**
+ * Event-safe notification identity — never dedupe across event types or entities.
+ * @param {string} eventType
+ * @param {string} entityId — bidId, shipmentId, spaceId, etc.
+ * @param {string} receiverId
+ * @param {string} [eventVersion] — status transition, workflow step, or timestamp bucket
+ */
+function buildEventDedupeKey(eventType, entityId, receiverId, eventVersion) {
+  const parts = [
+    String(eventType || "").trim(),
+    String(entityId || "").trim(),
+    String(receiverId || "").trim()
+  ];
+  const ver = eventVersion != null ? String(eventVersion).trim() : "";
+  if (ver) parts.push(ver);
+  return buildDedupeKey(parts);
+}
+
+/** Legacy content hash — only when no entityId/eventType identity is available. */
+function buildLegacyContentDedupeKey(receiverId, title, message) {
+  return buildDedupeKey([receiverId, title, String(message).slice(0, 120)]);
+}
 
 class InMemoryAdapter {
   constructor(windowMs = DEDUPE_WINDOW_MS) {
@@ -92,5 +116,7 @@ module.exports = {
   InMemoryAdapter,
   RedisAdapter,
   createNotificationDedupeAdapter,
+  buildEventDedupeKey,
+  buildLegacyContentDedupeKey,
   DEDUPE_WINDOW_MS
 };

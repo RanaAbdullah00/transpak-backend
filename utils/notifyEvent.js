@@ -1,5 +1,9 @@
 const { query } = require("../db/pool");
-const { createNotificationDedupeAdapter } = require("./notificationDedupeAdapter");
+const {
+  createNotificationDedupeAdapter,
+  buildEventDedupeKey,
+  buildLegacyContentDedupeKey
+} = require("./notificationDedupeAdapter");
 const { buildDedupeKey, newEventId, emitDispatchEvent, DISPATCH_TYPES } = require("./realtimeDispatch");
 const { resolveEventType } = require("./eventContractRegistry");
 const { roleNotifyGuard } = require("./roleNotifyGuard");
@@ -14,7 +18,21 @@ const socketQueues = new Map();
 const notificationDedupe = createNotificationDedupeAdapter();
 
 function dedupeKeyFromContent(receiverId, title, message) {
-  return buildDedupeKey([receiverId, title, String(message).slice(0, 120)]);
+  return buildLegacyContentDedupeKey(receiverId, title, message);
+}
+
+function resolveNotificationDedupeKey({
+  eventType,
+  receiverId,
+  title,
+  message,
+  idempotencyKey,
+  entityId,
+  eventVersion
+}) {
+  if (idempotencyKey) return String(idempotencyKey).trim();
+  if (entityId) return buildEventDedupeKey(eventType, entityId, receiverId, eventVersion);
+  return dedupeKeyFromContent(receiverId, title, message);
 }
 
 function toSocketPayload(row, eventType) {
@@ -138,7 +156,17 @@ async function insertNotification({ receiverId, senderId, roleType, title, messa
   }
 }
 
-async function notifyUser({ receiverId, senderId, roleType, title, message, type, idempotencyKey }) {
+async function notifyUser({
+  receiverId,
+  senderId,
+  roleType,
+  title,
+  message,
+  type,
+  idempotencyKey,
+  entityId,
+  eventVersion
+}) {
   if (!receiverId || !title || !message) return null;
 
   try {
@@ -159,7 +187,16 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
   }
 
   const eventType = resolveEventType(type || title);
-  const dedupeKey = idempotencyKey || dedupeKeyFromContent(receiverId, title, message);
+  const hasEventIdentity = Boolean(idempotencyKey || entityId);
+  const dedupeKey = resolveNotificationDedupeKey({
+    eventType,
+    receiverId,
+    title,
+    message,
+    idempotencyKey,
+    entityId,
+    eventVersion
+  });
   const now = Date.now();
   notificationDedupe.clearExpired(now);
   if (await notificationDedupe.has(dedupeKey)) {
@@ -171,9 +208,10 @@ async function notifyUser({ receiverId, senderId, roleType, title, message, type
   }
 
   try {
-    const existing =
-      (await findByDedupeKey(receiverId, dedupeKey)) ||
-      (await findRecentNotification(receiverId, title, message));
+    let existing = await findByDedupeKey(receiverId, dedupeKey);
+    if (!existing && !hasEventIdentity) {
+      existing = await findRecentNotification(receiverId, title, message);
+    }
     if (existing) {
       await notificationDedupe.set(dedupeKey, now);
       queueSocketEmit(receiverId, toSocketPayload(existing, eventType), existing.roleType);
@@ -246,7 +284,9 @@ module.exports = {
   notifyUser,
   notifyLoadPostedToCarriers,
   flushAllNotificationQueues,
-  dedupeKeyFromContent
+  dedupeKeyFromContent,
+  buildEventDedupeKey,
+  resolveNotificationDedupeKey
 };
 
 /** Lazy re-export — avoids circular init with adminNotify breaking notifyUser exports. */
