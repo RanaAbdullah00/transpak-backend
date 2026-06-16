@@ -33,7 +33,7 @@ const API_ORIGIN = (
   .replace(/\/api\/?.*$/i, "")
   .replace(/\/$/, "");
 
-const EXPECTED_SCHEMA = "023";
+const { SCHEMA_VERSION: EXPECTED_SCHEMA } = require(path.join(backendRoot, "db/schemaGuard.js"));
 const REQUIRED_MIGRATIONS = [
   "020_truck_fleet_status.sql",
   "021_matching_engine_indexes.sql",

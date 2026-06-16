@@ -35,8 +35,11 @@ describe("Phase 7 — RBAC & IDOR static guards", () => {
 
   it("notifications use dedupe_key unique constraint handling", () => {
     const src = read("utils/notifyEvent.js");
-    assert.ok(src.includes("ON CONFLICT (receiver_id, dedupe_key)"));
+    const guard = read("db/schemaGuard.js");
+    assert.ok(src.includes("ON CONFLICT ON CONSTRAINT uq_notifications_receiver_dedupe_full"));
     assert.ok(src.includes("findByDedupeKey"));
+    assert.ok(guard.includes("verifyNotificationDedupeConstraint"));
+    assert.ok(guard.includes("uq_notifications_receiver_dedupe_full"));
   });
 
   it("notification routes resolve workspace header", () => {

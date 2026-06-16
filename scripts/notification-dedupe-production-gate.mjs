@@ -213,11 +213,13 @@ async function main() {
     { dbRows: dbRows.slice(0, 10), bidIds }
   );
 
-  // PHASE 3 — identity consistency
+  // PHASE 3 — identity consistency (only rows from this run's bidIds; ignore concurrent probe noise)
+  const relevantParsed = parsed.filter((p) => p.entityId && bidIds.includes(p.entityId));
   const identityPass =
-    parsed.length >= 3 &&
-    parsed.every((p) => p.eventType === 'BID_ACCEPTED' && p.entityId && bidIds.includes(p.entityId));
-  phase('phase3-identity', identityPass, { parsed: parsed.slice(0, 5), bidIds });
+    relevantParsed.length >= 3 &&
+    new Set(relevantParsed.map((p) => p.entityId)).size >= 3 &&
+    relevantParsed.every((p) => p.eventType === 'BID_ACCEPTED' && p.entityId);
+  phase('phase3-identity', identityPass, { parsed: relevantParsed.slice(0, 5), bidIds, totalRows: parsed.length });
 
   // PHASE 4 — sync API (3 accepts + optional status if we advance one shipment)
   const sinceTriple = sinceBaseline;

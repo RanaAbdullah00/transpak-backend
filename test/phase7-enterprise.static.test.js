@@ -30,12 +30,15 @@ describe("Phase 7 Enterprise — strict distributed mode", () => {
     assert.ok(read("src/app.js").includes("distributed"));
   });
 
-  it("migration 028 adds causal + tracing + alerts", () => {
+  it("migration 028 adds causal + tracing + alerts; schema guard at current version", () => {
     const sql = read("db/migrations/028_phase7_causal_tracing_alerts.sql");
     assert.ok(sql.includes("parent_event_id"));
     assert.ok(sql.includes("trace_spans"));
     assert.ok(sql.includes("system_alerts"));
-    assert.equal(read("db/schemaGuard.js").includes('SCHEMA_VERSION = "030"'), true);
+    const { SCHEMA_VERSION } = require("../db/schemaGuard");
+    assert.ok(parseInt(SCHEMA_VERSION, 10) >= 32, `SCHEMA_VERSION must be >= 032 (got ${SCHEMA_VERSION})`);
+    assert.ok(read("db/schemaGuard.js").includes("verifyNotificationDedupeConstraint"));
+    assert.ok(read("db/migrate.js").includes("032_notifications_dedupe_constraint.sql"));
   });
 });
 
