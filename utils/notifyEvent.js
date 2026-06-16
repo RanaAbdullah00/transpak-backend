@@ -127,11 +127,12 @@ async function findRecentNotification(receiverId, title, message) {
 }
 
 async function insertNotification({ receiverId, senderId, roleType, title, message, dedupeKey, eventId }) {
+  const safeKey = dedupeKey ? String(dedupeKey).trim() : null;
   try {
     const { rows } = await query(
       `INSERT INTO notifications (receiver_id, sender_id, role_type, title, message, dedupe_key, event_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (receiver_id, dedupe_key) DO NOTHING
+       ON CONFLICT ON CONSTRAINT uq_notifications_receiver_dedupe_full DO NOTHING
        RETURNING id, event_id AS "eventId", sender_id AS "senderId", receiver_id AS "receiverId",
                  role_type AS "roleType", title, message, read, created_at AS "createdAt"`,
       [
@@ -140,16 +141,16 @@ async function insertNotification({ receiverId, senderId, roleType, title, messa
         roleType || null,
         String(title).slice(0, 200),
         String(message).slice(0, 2000),
-        dedupeKey,
+        safeKey,
         eventId
       ]
     );
     if (rows[0]) return rows[0];
-    if (dedupeKey) return findByDedupeKey(receiverId, dedupeKey);
+    if (safeKey) return findByDedupeKey(receiverId, safeKey);
     return null;
   } catch (err) {
     if (String(err.code) === "23505") {
-      if (dedupeKey) return findByDedupeKey(receiverId, dedupeKey);
+      if (safeKey) return findByDedupeKey(receiverId, safeKey);
       return findRecentNotification(receiverId, title, message);
     }
     throw err;
@@ -203,8 +204,9 @@ async function notifyUser({
     const cached = await findByDedupeKey(receiverId, dedupeKey);
     if (cached) {
       queueSocketEmit(receiverId, toSocketPayload(cached, eventType), cached.roleType);
+      return cached;
     }
-    return cached;
+    // Stale in-memory/redis dedupe entry without DB row — fall through to insert
   }
 
   try {
@@ -231,9 +233,29 @@ async function notifyUser({
     await notificationDedupe.set(dedupeKey, now);
     if (row) {
       queueSocketEmit(receiverId, toSocketPayload(row, eventType), row.roleType);
+      return row;
     }
-    return row;
-  } catch {
+    // eslint-disable-next-line no-console
+    console.error("[notify] insert returned no row", {
+      receiverId,
+      dedupeKey,
+      eventType,
+      title
+    });
+    return null;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[notify] insert failed", {
+      code: err?.code,
+      receiverId,
+      dedupeKey,
+      eventType,
+      title,
+      message: err?.message || String(err)
+    });
+    if (String(err?.code) === "23505" && dedupeKey) {
+      return findByDedupeKey(receiverId, dedupeKey);
+    }
     return null;
   }
 }

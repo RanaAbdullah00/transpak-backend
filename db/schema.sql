@@ -219,9 +219,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_receiver ON notifications(receiver_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(receiver_id) WHERE read = false;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_receiver_dedupe
-  ON notifications (receiver_id, dedupe_key)
-  WHERE dedupe_key IS NOT NULL AND char_length(trim(dedupe_key)) > 0;
+-- Full unique constraint (migration 032); partial index replaced for ON CONFLICT compatibility
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS uq_notifications_receiver_dedupe_full;
+ALTER TABLE notifications ADD CONSTRAINT uq_notifications_receiver_dedupe_full UNIQUE (receiver_id, dedupe_key);
 
 -- Wallet removed (offline settlement).
 

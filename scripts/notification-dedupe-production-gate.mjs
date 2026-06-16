@@ -12,7 +12,7 @@ const backendRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'
 const require = createRequire(path.join(backendRoot, 'package.json'));
 require('dotenv').config({ path: path.join(backendRoot, '.env') });
 
-const PREVIOUS_COMMIT = 'eb4d5d368b49';
+const PREVIOUS_COMMIT = '547c541960ec';
 const API = (process.env.QA_BASE_URL || 'https://transpak-backend-1.onrender.com').replace(/\/$/, '');
 const PASS = process.env.PHASE1_RBAC_PASSWORD || '';
 const SHIPPER = process.env.E2E_SHIPPER_ONLY_EMAIL || 'transpak.phase1.shipper@example.com';
@@ -56,7 +56,7 @@ async function createLoad(shipperToken, tag) {
       destination: 'Karachi',
       weight: 11000,
       vehicleType: 'Truck',
-      expectedPrice: 76000,
+      expectedPrice: 150000,
       pickupDate: pickup,
       deadlineMinutes: 720
     })
@@ -73,7 +73,7 @@ async function placeBid(carrierToken, loadId, tag) {
       'Content-Type': 'application/json',
       'Idempotency-Key': `gate-bid-${tag}-${loadId}`
     },
-    body: JSON.stringify({ loadId, amount: 74000, acceptListedFare: false })
+    body: JSON.stringify({ loadId, amount: 145000, acceptListedFare: false })
   });
   const body = await res.json();
   return { ok: res.ok, status: res.status, bid: body?.data };

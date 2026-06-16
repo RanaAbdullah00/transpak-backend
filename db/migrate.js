@@ -40,7 +40,8 @@ const INCREMENTAL_MIGRATIONS = [
   "028_phase7_causal_tracing_alerts.sql",
   "029_review_prompt_dismissed.sql",
   "030_performance_indexes.sql",
-  "031_bids_unique_constraint.sql"
+  "031_bids_unique_constraint.sql",
+  "032_notifications_dedupe_constraint.sql"
 ];
 
 const ALL_MIGRATIONS = [BASELINE_MIGRATION, ...INCREMENTAL_MIGRATIONS];
