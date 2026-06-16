@@ -12,10 +12,12 @@ import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.join(__dirname, "..");
-const require = createRequire(path.join(backendRoot, "package.json"));
+const require = createRequire(import.meta.url);
 require("dotenv").config({ path: path.join(backendRoot, ".env") });
 
-const { getBaseUrl, hasIntegrationEnv, hasDatabaseUrl, hasSecondCarrier } = require("../test/helpers/config");
+const { getBaseUrl, getE2ECredentials, hasIntegrationEnv, hasDatabaseUrl, hasSecondCarrier } = require(
+  path.join(backendRoot, "test", "helpers", "config.js")
+);
 
 const results = [];
 function record(id, pass, detail) {
@@ -74,16 +76,9 @@ async function runHttpProbes() {
     return;
   }
 
-  const shipper = await login(
-    process.env.E2E_SHIPPER_EMAIL,
-    process.env.E2E_SHIPPER_PASSWORD,
-    "shipper"
-  );
-  const carrier = await login(
-    process.env.E2E_CARRIER_EMAIL,
-    process.env.E2E_CARRIER_PASSWORD,
-    "carrier"
-  );
+  const creds = getE2ECredentials();
+  const shipper = await login(creds.shipperEmail, creds.shipperPassword, "shipper");
+  const carrier = await login(creds.carrierEmail, creds.carrierPassword, "carrier");
 
   const anon = await api("GET", "/api/loads/mine");
   record("rbac-anon", anon.status === 401, `anonymous GET /loads/mine → ${anon.status}`);
