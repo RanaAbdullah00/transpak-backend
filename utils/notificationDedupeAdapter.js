@@ -34,6 +34,10 @@ class InMemoryAdapter {
 
   cleanup(now = Date.now()) {
     if (this.map.size < 5000) return;
+    this.clearExpired(now);
+  }
+
+  clearExpired(now = Date.now()) {
     for (const [k, ts] of this.map) {
       if (now - ts > this.windowMs) this.map.delete(k);
     }
@@ -60,6 +64,10 @@ class RedisAdapter {
   }
 
   async cleanup() {
+    return undefined;
+  }
+
+  async clearExpired() {
     return undefined;
   }
 }

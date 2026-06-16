@@ -208,7 +208,7 @@ router.patch(
   validate,
   asyncHandler(async (req, res) => {
     const { rowCount } = await query(
-      `UPDATE notifications SET read = true, updated_at = now() WHERE id = $1`,
+      `UPDATE notifications SET read = true WHERE id = $1`,
       [req.params.id]
     );
     if (!rowCount) return sendError(res, 404, "Not found");
@@ -219,7 +219,7 @@ router.patch(
 router.patch(
   "/notifications/read-all",
   asyncHandler(async (req, res) => {
-    await query(`UPDATE notifications SET read = true, updated_at = now() WHERE read = false`);
+    await query(`UPDATE notifications SET read = true WHERE read = false`);
     return sendSuccess(res, 200, { ok: true });
   })
 );
@@ -622,11 +622,11 @@ router.get("/activity-feed", asyncHandler(async (req, res) => {
     unions.push(
       `SELECT s.id::text AS id, 'shipment' AS type, s.updated_at AS ts,
               'shipment.updated' AS action,
-              l.code AS ref, s.status AS detail,
+              l.code AS ref, s.status::text AS detail,
               COALESCE(u.full_name, u.email, 'User') AS actor
        FROM shipments s
        JOIN loads l ON l.id = s.load_id
-       LEFT JOIN users u ON u.id = s.carrier_id`
+       LEFT JOIN users u ON u.id = l.assigned_carrier_id`
     );
   }
   if (type === "all" || type === "audit") {
