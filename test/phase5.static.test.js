@@ -63,6 +63,10 @@ describe("Phase 5 — Redis adapter inactive by default", () => {
   });
 
   it("RedisAdapter uses NX semantics via redis client", async () => {
+    const prevUrl = process.env.REDIS_URL;
+    const prevStrict = process.env.ENABLE_STRICT_DISTRIBUTED;
+    delete process.env.REDIS_URL;
+    process.env.ENABLE_STRICT_DISTRIBUTED = "false";
     const { RedisAdapter } = require("../utils/notificationDedupeAdapter");
     const { getRedisClient, resetRedisClientForTests } = require("../utils/redisClient");
     resetRedisClientForTests();
@@ -70,6 +74,11 @@ describe("Phase 5 — Redis adapter inactive by default", () => {
     assert.equal(await adapter.has("x"), false);
     await adapter.set("x");
     assert.equal(await adapter.has("x"), true);
+    resetRedisClientForTests();
+    if (prevUrl != null) process.env.REDIS_URL = prevUrl;
+    else delete process.env.REDIS_URL;
+    if (prevStrict != null) process.env.ENABLE_STRICT_DISTRIBUTED = prevStrict;
+    else delete process.env.ENABLE_STRICT_DISTRIBUTED;
     resetRedisClientForTests();
   });
 });

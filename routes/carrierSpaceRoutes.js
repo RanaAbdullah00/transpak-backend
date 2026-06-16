@@ -13,7 +13,6 @@ const {
   sendForbidden,
   FORBIDDEN_CODES
 } = require("../utils/resourceAuth");
-const { closeExpiredCapacityListings } = require("../utils/capacityListingLifecycle");
 const { validateAvailabilitySlots } = require("../utils/availabilitySlots");
 const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 
@@ -34,7 +33,6 @@ function validate(req, res, next) {
 }
 
 router.get("/", protect, requireAnyRole(["shipper", "admin"]), async (req, res) => {
-  void closeExpiredCapacityListings().catch(() => {});
   const origin = String(req.query?.origin || "").trim();
   const destination = String(req.query?.destination || "").trim();
   const vehicleType = String(req.query?.vehicleType || "").trim();
@@ -108,6 +106,20 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
                AND r.status IN ('active', 'in_transit')) AS "activeRequestCount"
      FROM carrier_space_listings
      WHERE carrier_id = $1
+       AND status <> 'closed'
+       AND NOT (
+         status = 'open'
+         AND (
+           (available_from IS NOT NULL AND available_from < CURRENT_DATE)
+           OR EXISTS (
+             SELECT 1
+             FROM jsonb_array_elements(COALESCE(availability_slots, '[]'::jsonb)) elem
+             WHERE elem->>'type' = 'visibility'
+               AND elem->>'visibleUntil' IS NOT NULL
+               AND (elem->>'visibleUntil')::timestamptz < now()
+           )
+         )
+       )
      ORDER BY created_at DESC
      LIMIT 100`,
     [req.auth.userId]

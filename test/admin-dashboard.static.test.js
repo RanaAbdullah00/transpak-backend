@@ -27,7 +27,7 @@ describe("admin dashboard static gates", () => {
   });
 
   it("cache invalidation wired on bid accept, shipment status, fleet approve", () => {
-    assert.ok(read("routes/bidRoutes.js").includes("invalidateAdminDashboardCache"));
+    assert.ok(read("utils/bidAcceptance.js").includes("invalidateAdminDashboardCache"));
     assert.ok(read("routes/shipmentRoutes.js").includes("invalidateAdminDashboardCache"));
     assert.ok(read("src/controllers/adminFleetController.js").includes("invalidateAdminDashboardCache"));
   });

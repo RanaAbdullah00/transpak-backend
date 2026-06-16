@@ -19,7 +19,7 @@ describe("matching engine — fleet rules", () => {
   it("rejects when fleet has no matching vehicle type", () => {
     const r = fleetMatchesLoad(
       { truckTypes: ["Mazda"], maxCapacityTons: 10, truckCount: 1 },
-      { vehicle_type: "Reefer", weight: 5 }
+      { vehicle_type: "Reefer", weight: 5000 }
     );
     assert.equal(r.ok, false);
     assert.equal(r.code, "VEHICLE_TYPE_MISMATCH");
@@ -28,7 +28,7 @@ describe("matching engine — fleet rules", () => {
   it("rejects when load weight exceeds fleet capacity", () => {
     const r = fleetMatchesLoad(
       { truckTypes: ["flatbed"], maxCapacityTons: 8, truckCount: 1 },
-      { vehicle_type: "Flatbed", weight: 12 }
+      { vehicle_type: "Flatbed", weight: 12000 }
     );
     assert.equal(r.ok, false);
     assert.equal(r.code, "CAPACITY_EXCEEDED");
@@ -37,7 +37,7 @@ describe("matching engine — fleet rules", () => {
   it("accepts matching fleet and load", () => {
     const r = fleetMatchesLoad(
       { truckTypes: ["Container"], maxCapacityTons: 25, truckCount: 2 },
-      { vehicle_type: "container", weight: 20 }
+      { vehicle_type: "container", weight: 20000 }
     );
     assert.equal(r.ok, true);
   });

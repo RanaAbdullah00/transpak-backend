@@ -6,6 +6,8 @@ const { getMetricsSnapshot } = require("./metricsCollector");
 const { getDistributedHealthSnapshot, verifyRedisConnectivity } = require("./distributedBootstrapGuard");
 const { requiresRedis } = require("./distributedMode");
 const realtimeHub = require("../services/realtimeHub");
+const { notifyAdmins } = require("./notifyEvent");
+const { buildDedupeKey } = require("./realtimeDispatch");
 
 const SEVERITY = Object.freeze({
   INFO: "INFO",
@@ -42,8 +44,11 @@ async function persistAlert({ severity, code, message, metadata = {} }) {
        VALUES ($1, $2, $3, $4::jsonb)`,
       [severity, code, message, JSON.stringify(metadata || {})]
     );
-  } catch {
-    /* ignore during tests */
+  } catch (err) {
+    if (process.env.NODE_ENV !== "test") {
+      // eslint-disable-next-line no-console
+      console.warn("[alertEngine] system_alerts insert failed:", err?.message || err);
+    }
   }
 
   try {
@@ -52,6 +57,16 @@ async function persistAlert({ severity, code, message, metadata = {} }) {
   } catch {
     /* ignore */
   }
+
+  void notifyAdmins({
+    senderId: null,
+    title: code || "SYSTEM_ALERT",
+    type: "SYSTEM_ALERT",
+    message: message || code,
+    idempotencyKey: buildDedupeKey(["ADMIN", "SYSTEM_ALERT", code, alert.createdAt]),
+    metadata: { severity, ...metadata }
+  });
+
   return alert;
 }
 

@@ -1,5 +1,6 @@
 const { getPool, query } = require("../db/pool");
 const { ACTIVE_BID_STATUSES_SQL } = require("./bidStateMachine");
+const { closeExpiredCapacityListings } = require("./capacityListingLifecycle");
 
 /**
  * Bidding window length as a PostgreSQL interval (Supabase / PG 14+ safe).
@@ -56,10 +57,19 @@ async function expireBidsOnNonOpenLoads(client = null) {
  */
 async function runMarketplaceExpiryProcessor() {
   const pool = getPool();
+  let capacityExpired = 0;
+  try {
+    await closeExpiredCapacityListings();
+    capacityExpired = 1;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[expiry] capacity close failed:", err?.message || err);
+  }
+
   if (!pool) {
     const loads = await expireStaleOpenLoads();
     const bids = await expireBidsOnNonOpenLoads();
-    return { loadsExpired: loads, bidsExpired: bids };
+    return { loadsExpired: loads, bidsExpired: bids, capacityExpired };
   }
 
   const client = await pool.connect();
@@ -68,7 +78,7 @@ async function runMarketplaceExpiryProcessor() {
     const loadsExpired = await expireStaleOpenLoads(client);
     const bidsExpired = await expireBidsOnNonOpenLoads(client);
     await client.query("COMMIT");
-    return { loadsExpired, bidsExpired };
+    return { loadsExpired, bidsExpired, capacityExpired };
   } catch (err) {
     try {
       await client.query("ROLLBACK");

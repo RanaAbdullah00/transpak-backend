@@ -37,6 +37,7 @@ function getBaseUrl() {
     process.env.QA_BASE_URL ||
     process.env.TEST_BASE_URL ||
     process.env.E2E_BASE_URL ||
+    process.env.VITE_API_URL ||
     "";
   if (raw) return String(raw).replace(/\/$/, "");
 
@@ -100,6 +101,30 @@ function skipAdminReason() {
   return false;
 }
 
+/** Dual-role notification PATCH — needs DB seed + reachable API + RBAC password. */
+function hasDualRoleEnv() {
+  const password = process.env.PHASE1_RBAC_PASSWORD || process.env.E2E_SHIPPER_PASSWORD;
+  const email = process.env.E2E_DUAL_EMAIL || "transpak.phase1.dual@example.com";
+  if (!hasDatabaseUrl() || !password || !email) return false;
+  const apiExplicit = Boolean(
+    process.env.QA_BASE_URL ||
+      process.env.TEST_BASE_URL ||
+      process.env.E2E_BASE_URL ||
+      process.env.VITE_API_URL
+  );
+  return apiExplicit || hasHttpCredentials();
+}
+
+function skipDualRoleReason() {
+  if (!hasDatabaseUrl()) return skipDbReason();
+  const password = process.env.PHASE1_RBAC_PASSWORD || process.env.E2E_SHIPPER_PASSWORD;
+  if (!password) return "Set PHASE1_RBAC_PASSWORD or E2E_SHIPPER_PASSWORD for dual-role notification tests";
+  if (!hasDualRoleEnv()) {
+    return "Set VITE_API_URL or QA_BASE_URL (reachable API) for dual-role notification HTTP tests";
+  }
+  return false;
+}
+
 module.exports = {
   getBaseUrl,
   hasDatabaseUrl,
@@ -110,5 +135,7 @@ module.exports = {
   skipIntegrationReason,
   skipDbReason,
   skipConcurrencyReason,
-  skipAdminReason
+  skipAdminReason,
+  hasDualRoleEnv,
+  skipDualRoleReason
 };

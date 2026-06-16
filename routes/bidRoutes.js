@@ -8,7 +8,7 @@ const {
   FORBIDDEN_CODES
 } = require("../utils/resourceAuth");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
-const { getPool, query } = require("../db/pool");
+const { query } = require("../db/pool");
 const {
   assertBidTransition,
   apiBidStatus,
@@ -23,21 +23,21 @@ const {
 const {
   emitBidStateChange,
   emitBidRefresh,
-  emitBidAcceptMarketplaceFanout,
   BID_DISPATCH
 } = require("../utils/bidRealtime");
 const { notifyAdmins } = require("../utils/notifyEvent");
-const { invalidateAdminDashboardCache } = require("../utils/adminDashboardCache");
 const { buildDedupeKey, newEventId } = require("../utils/realtimeDispatch");
 const { emitContractEntityDispatch } = require("../utils/eventContractRegistry");
 const { validateBidPlacement, validateCounterBid } = require("../utils/matchingEngine");
+const { OPEN_BIDDING_ELIGIBLE_SQL, BIDDING_DEADLINE_INTERVAL_SQL } = require("../utils/loadExpiry");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
 const { assertNotSelfCommercial } = require("../utils/selfExclusion");
 const { requireCarrierTruckReady } = require("../middleware/commercialGates");
-const { createShipmentUnified, ensureShipmentBookedEvent } = require("../utils/shipmentFactory");
 const { writeAudit } = require("../utils/auditLog");
 const { forbidAdminOnlyCommercial } = require("../middleware/forbidAdminOnlyCommercial");
+const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
+const { acceptBidAndBook } = require("../utils/bidAcceptance");
 const router = express.Router();
 
 router.use(forbidAdminOnlyCommercial);
@@ -70,6 +70,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(
       `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
               b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
               b.created_at AS "createdAt",
+              l.origin, l.destination,
               COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
               us.profile_image AS "shipperAvatar",
               l.vehicle_type AS "vehicleType"
@@ -92,6 +93,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(
       `SELECT b.id, b.load_id AS "loadId", b.carrier_id AS "carrierId", b.amount,
               b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
               b.created_at AS "createdAt",
+              l.origin, l.destination,
               COALESCE(u.full_name, u.email, 'Carrier') AS "carrierName",
               u.profile_image AS "carrierAvatar",
               l.vehicle_type AS "vehicleType"
@@ -118,6 +120,8 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
     `SELECT b.id, b.load_id AS "loadId", l.code AS "loadCode", b.carrier_id AS "carrierId", b.amount,
             b.status, b.suggested_amount AS "suggestedAmount", b.suggested_by AS "suggestedBy",
             b.created_at AS "createdAt",
+            l.origin, l.destination,
+            (l.created_at + ${BIDDING_DEADLINE_INTERVAL_SQL}) AS "expiresAt",
             COALESCE(us.full_name, us.email, 'Shipper') AS "shipperName",
             us.profile_image AS "shipperAvatar",
             l.vehicle_type AS "vehicleType"
@@ -126,6 +130,10 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
      LEFT JOIN users us ON us.id = l.shipper_id
      WHERE b.carrier_id = $1 AND l.shipper_id <> b.carrier_id
        AND ${COMMERCIAL_BID_VISIBLE_SQL}
+       AND (
+         b.status NOT IN ${ACTIVE_BID_STATUSES_SQL}
+         OR (${OPEN_BIDDING_ELIGIBLE_SQL})
+       )
      ORDER BY b.created_at DESC
      LIMIT 500`,
     [req.auth.userId]
@@ -139,6 +147,7 @@ router.post(
   bidsRouteLimiter,
   requireRole("carrier"),
   requireCarrierTruckReady,
+  withIdempotencyKey("bid_post"),
   [
     body("loadId").custom((v) => (isUuid(v) ? true : (() => { throw new Error("loadId is required"); })())),
     body("amount").toFloat().isFloat({ gt: 0 }).withMessage("amount must be greater than 0")
@@ -146,9 +155,9 @@ router.post(
   validate,
   async (req, res) => {
     try {
-    const { loadId, amount } = req.body || {};
+    const { loadId, amount, acceptListedFare } = req.body || {};
     const { rows: loadRows } = await query(
-      `SELECT id, shipper_id, status, weight, vehicle_type,
+      `SELECT id, shipper_id, status, weight, vehicle_type, expected_price,
               deadline_hours, deadline_minutes, created_at
        FROM loads
        WHERE id = $1`,
@@ -262,6 +271,25 @@ router.post(
       flowStatus: apiBidStatus(rows[0].status),
       vehicleTypeMismatchWarning
     };
+
+    const shouldAutoBook =
+      acceptListedFare === true ||
+      (String(process.env.BID_AUTO_ACCEPT_LISTED_FARE || "true").toLowerCase() !== "false" &&
+        Number(amount) === Number(load.expected_price) &&
+        acceptListedFare !== false);
+
+    if (shouldAutoBook && Number(load.expected_price) > 0) {
+      const booked = await acceptBidAndBook(rows[0].id, req.auth.userId, {
+        allowCarrierListedAccept: true
+      });
+      if (booked.ok) {
+        return sendSuccess(res, 200, { ...bid, ...booked.data, autoBooked: true }, booked.message);
+      }
+      if (booked.code !== "LOAD_ALREADY_BOOKED") {
+        return sendError(res, booked.status, booked.message, null, booked.code);
+      }
+    }
+
     return sendSuccess(res, 201, bid, "Created");
     } catch (err) {
       if (err.code === "COUNTER_LIMIT_REACHED") {
@@ -294,7 +322,15 @@ router.put(
       }
       assertBidTransition(bid.status, BID.REJECTED);
       await query(`UPDATE bids SET status = 'rejected', updated_at = now() WHERE id = $1`, [bidId]);
-      const { rows: bidMeta } = await query(`SELECT carrier_id FROM bids WHERE id = $1`, [bidId]);
+      const { rows: bidMeta } = await query(`SELECT carrier_id, load_id FROM bids WHERE id = $1`, [bidId]);
+      if (bidMeta[0]?.carrier_id && bidMeta[0]?.load_id) {
+        await query(
+          `INSERT INTO carrier_load_dismissals (load_id, carrier_id)
+           VALUES ($1, $2)
+           ON CONFLICT (load_id, carrier_id) DO NOTHING`,
+          [bidMeta[0].load_id, bidMeta[0].carrier_id]
+        );
+      }
       if (bidMeta[0]?.carrier_id) {
         await emitBidStateChange({
           receiverId: bidMeta[0].carrier_id,
@@ -608,241 +644,22 @@ router.put(
   "/:id/accept",
   protect,
   requireRole("shipper"),
+  withIdempotencyKey("bid_accept"),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid bid id"); })()))],
   validate,
   async (req, res) => {
     const bidId = req.params.id;
-    const pool = getPool();
-    const client = await pool.connect();
     try {
-      await client.query("BEGIN");
-
-      const { rows: bidRows } = await client.query(
-        `SELECT b.id, b.load_id, b.carrier_id, b.amount, b.status,
-                b.suggested_amount AS suggested_amount, b.suggested_by AS suggested_by,
-                l.id AS load_id_locked, l.code AS load_code, l.shipper_id, l.status AS load_status, l.accepted_bid_id
-         FROM bids b
-         JOIN loads l ON l.id = b.load_id
-         WHERE b.id = $1
-         FOR UPDATE OF l, b`,
-        [bidId]
-      );
-      const bid = bidRows[0];
-      if (!bid) {
-        await client.query("ROLLBACK");
-        return sendError(res, 404, "Not found");
+      const result = await acceptBidAndBook(bidId, req.auth.userId);
+      if (!result.ok) {
+        if (result.code === "FORBIDDEN") {
+          return sendForbidden(res, result.message, FORBIDDEN_CODES.FORBIDDEN_OWNER);
+        }
+        return sendError(res, result.status, result.message, null, result.code);
       }
-
-      if (!canMutateBidAsShipper(bid, req.auth)) {
-        await client.query("ROLLBACK");
-        return sendForbidden(res, "Forbidden", FORBIDDEN_CODES.FORBIDDEN_OWNER);
-      }
-
-      try {
-        assertNotSelfCommercial({
-          shipperId: bid.shipper_id,
-          carrierId: bid.carrier_id,
-          action: "accept a bid on"
-        });
-      } catch (e) {
-        await client.query("ROLLBACK");
-        return sendError(res, e.statusCode || 403, e.message, null, e.code);
-      }
-
-      if (bid.accepted_bid_id && String(bid.accepted_bid_id) !== String(bidId)) {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "This load is already booked", null, "LOAD_ALREADY_BOOKED");
-      }
-
-      const { rows: otherAccepted } = await client.query(
-        `SELECT id FROM bids
-         WHERE load_id = $1 AND status = 'accepted' AND id <> $2
-         LIMIT 1
-         FOR UPDATE`,
-        [bid.load_id, bidId]
-      );
-      if (otherAccepted[0]) {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "Another carrier was already accepted", null, "LOAD_ALREADY_BOOKED");
-      }
-
-      if (normalizeBidStatus(bid.status) === BID.ACCEPTED) {
-        await client.query("ROLLBACK");
-        return sendSuccess(res, 200, { id: bid.id, flowStatus: "ACCEPTED" }, "Already accepted");
-      }
-      if (normalizeBidStatus(bid.status) === BID.REJECTED) {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "Bid is not actionable", null, "BID_NOT_ACTIONABLE");
-      }
-      assertBidTransition(bid.status, BID.ACCEPTED);
-      const bidSt = normalizeBidStatus(bid.status);
-      if (bidSt === BID.COUNTER && bid.suggested_by === "shipper") {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "Awaiting carrier response to your offer");
-      }
-      if (
-        bidSt !== BID.PENDING_SHIPPER &&
-        !(bidSt === BID.COUNTER && bid.suggested_by === "carrier")
-      ) {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "Bid is not pending");
-      }
-      if (bid.load_status !== "open") {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "Load is not open", null, "LOAD_NOT_OPEN");
-      }
-
-      let effectiveAmount = Number(bid.amount);
-      if (isCounterOffered(bid.status) && bid.suggested_by === "carrier" && bid.suggested_amount != null) {
-        effectiveAmount = Number(bid.suggested_amount);
-      }
-
-      const { rows: loadBooked } = await client.query(
-        `UPDATE loads
-         SET assigned_carrier_id = $2,
-             accepted_bid_id = $3,
-             status = 'booked',
-             updated_at = now()
-         WHERE id = $1
-           AND status = 'open'
-           AND (accepted_bid_id IS NULL OR accepted_bid_id = $3)
-         RETURNING id`,
-        [bid.load_id, bid.carrier_id, bidId]
-      );
-      if (!loadBooked[0]) {
-        await client.query("ROLLBACK");
-        return sendError(res, 409, "Load was booked by another request", null, "LOAD_ALREADY_BOOKED");
-      }
-
-      await client.query(
-        `UPDATE bids
-         SET status = 'accepted',
-             amount = $2,
-             suggested_amount = NULL,
-             suggested_by = NULL,
-             updated_at = now()
-         WHERE id = $1`,
-        [bidId, effectiveAmount]
-      );
-      await client.query(
-        `UPDATE bids SET status = 'rejected', updated_at = now()
-         WHERE load_id = $1 AND id <> $2 AND status IN ${ACTIVE_BID_STATUSES_SQL}`,
-        [bid.load_id, bidId]
-      );
-
-      const { rows: bookingRows } = await client.query(
-        `INSERT INTO bookings (load_id, shipper_id, carrier_id, status, price)
-         VALUES ($1, $2, $3, 'approved', $4)
-         ON CONFLICT (load_id)
-         DO UPDATE SET carrier_id = EXCLUDED.carrier_id, status = 'approved', price = EXCLUDED.price, updated_at = now()
-         RETURNING id`,
-        [bid.load_id, bid.shipper_id, bid.carrier_id, effectiveAmount]
-      );
-      const bookingId = bookingRows[0]?.id;
-
-      await createShipmentUnified(client, {
-        loadId: bid.load_id,
-        bookingId,
-        mode: "booked_upsert"
-      });
-      await ensureShipmentBookedEvent(client, { loadId: bid.load_id, note: null });
-
-      await client.query("COMMIT");
-
-      invalidateAdminDashboardCache();
-
-      void writeAudit({
-        actorUserId: req.auth.userId,
-        action: "bid.accepted",
-        targetEntity: "bid",
-        targetId: bidId,
-        metadata: { loadId: bid.load_id, carrierId: bid.carrier_id, amount: effectiveAmount }
-      });
-      void writeAudit({
-        actorUserId: req.auth.userId,
-        action: "shipment.started",
-        targetEntity: "load",
-        targetId: bid.load_id,
-        metadata: { bidId, bookingId }
-      });
-
-      void emitBidStateChange({
-        receiverId: bid.carrier_id,
-        senderId: bid.shipper_id,
-        roleType: "carrier",
-        dispatchType: BID_DISPATCH.ACCEPTED,
-        title: "BID_ACCEPTED",
-        message: "Your bid was accepted. Contract is active."
-      });
-      void emitBidStateChange({
-        receiverId: bid.shipper_id,
-        senderId: bid.carrier_id,
-        roleType: "shipper",
-        dispatchType: BID_DISPATCH.ACCEPTED,
-        title: "CONTRACT_STARTED",
-        message: "Load booked. You can now contact the carrier."
-      });
-      emitBidRefresh(req.auth.userId, "shipper", BID_DISPATCH.ACCEPTED, {
-        bidId,
-        loadId: bid.load_id,
-        loadCode: bid.load_code || null
-      });
-      emitBidRefresh(bid.carrier_id, "carrier", BID_DISPATCH.ACCEPTED, {
-        bidId,
-        loadId: bid.load_id,
-        loadCode: bid.load_code || null
-      });
-
-      void emitBidAcceptMarketplaceFanout({
-        loadId: bid.load_id,
-        winningBidId: bidId,
-        winningCarrierId: bid.carrier_id,
-        shipperId: bid.shipper_id,
-        loadCode: bid.load_code || null
-      });
-
-      void notifyAdmins({
-        senderId: req.auth.userId,
-        title: "BID_ACCEPTED",
-        type: "BID_ACCEPTED",
-        message: `[Platform] Bid ${bidId} accepted — load ${bid.load_id} booked`,
-        idempotencyKey: buildDedupeKey(["ADMIN", "BID_ACCEPTED", bidId])
-      });
-
-      const { rows: codeRows } = await query(
-        `SELECT l.code AS "loadCode", l.id AS "loadId", s.id AS "shipmentId"
-         FROM loads l
-         LEFT JOIN shipments s ON s.load_id = l.id
-         WHERE l.id = $1
-         LIMIT 1`,
-        [bid.load_id]
-      );
-      return sendSuccess(
-        res,
-        200,
-        {
-          ok: true,
-          bookingId,
-          loadId: bid.load_id,
-          loadCode: codeRows[0]?.loadCode || null,
-          shipmentId: codeRows[0]?.shipmentId || null,
-          flowStatus: "ACCEPTED",
-          loadFlowStatus: "ACTIVE"
-        },
-        "Accepted"
-      );
+      return sendSuccess(res, result.status, result.data, result.message);
     } catch (err) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        // ignore
-      }
-      if (err.code === "INVALID_BID_TRANSITION" || err.code === "INVALID_BID_STATE") {
-        return sendError(res, err.statusCode || 409, err.message, { code: err.code });
-      }
       return sendError(res, 500, err.message || "Server error");
-    } finally {
-      client.release();
     }
   }
 );

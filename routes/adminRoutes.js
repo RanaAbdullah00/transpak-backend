@@ -202,6 +202,28 @@ router.get(
   })
 );
 
+router.patch(
+  "/notifications/:id/read",
+  [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
+  validate,
+  asyncHandler(async (req, res) => {
+    const { rowCount } = await query(
+      `UPDATE notifications SET read = true, updated_at = now() WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!rowCount) return sendError(res, 404, "Not found");
+    return sendSuccess(res, 200, { ok: true });
+  })
+);
+
+router.patch(
+  "/notifications/read-all",
+  asyncHandler(async (req, res) => {
+    await query(`UPDATE notifications SET read = true, updated_at = now() WHERE read = false`);
+    return sendSuccess(res, 200, { ok: true });
+  })
+);
+
 router.get(
   "/otp-logs",
   asyncHandler(async (req, res) => {
@@ -489,5 +511,155 @@ router.delete(
     return sendSuccess(res, 200, { ok: true });
   })
 );
+
+router.get("/audit-events", asyncHandler(async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+  const offset = (page - 1) * limit;
+  const action = String(req.query.action || "").trim();
+  const entity = String(req.query.entity || "").trim();
+  const actorId = String(req.query.actorId || "").trim();
+  const from = String(req.query.from || "").trim();
+  const to = String(req.query.to || "").trim();
+  const q = String(req.query.q || "").trim();
+
+  const clauses = ["1=1"];
+  const params = [];
+  let i = 1;
+
+  if (action) {
+    params.push(`%${action}%`);
+    clauses.push(`a.action ILIKE $${i++}`);
+  }
+  if (entity) {
+    params.push(`%${entity}%`);
+    clauses.push(`a.target_entity ILIKE $${i++}`);
+  }
+  if (actorId && isUuid(actorId)) {
+    params.push(actorId);
+    clauses.push(`a.actor_user_id = $${i++}`);
+  }
+  if (from) {
+    params.push(from);
+    clauses.push(`a.created_at >= $${i++}::timestamptz`);
+  }
+  if (to) {
+    params.push(to);
+    clauses.push(`a.created_at <= $${i++}::timestamptz`);
+  }
+  if (q) {
+    params.push(`%${q}%`);
+    clauses.push(
+      `(a.action ILIKE $${i} OR a.target_entity ILIKE $${i} OR COALESCE(u.full_name, u.email, '') ILIKE $${i})`
+    );
+    i++;
+  }
+
+  const where = clauses.join(" AND ");
+  const countParams = [...params];
+  const { rows: countRows } = await query(
+    `SELECT COUNT(*)::int AS c
+     FROM audit_events a
+     LEFT JOIN users u ON u.id = a.actor_user_id
+     WHERE ${where}`,
+    countParams
+  );
+  const total = countRows[0]?.c ?? 0;
+
+  params.push(limit, offset);
+  const { rows } = await query(
+    `SELECT a.id, a.action, a.target_entity AS "targetEntity", a.target_id AS "targetId",
+            a.metadata, a.created_at AS "createdAt",
+            a.actor_user_id AS "actorUserId",
+            COALESCE(u.full_name, u.email, 'System') AS "actorName"
+     FROM audit_events a
+     LEFT JOIN users u ON u.id = a.actor_user_id
+     WHERE ${where}
+     ORDER BY a.created_at DESC
+     LIMIT $${i++} OFFSET $${i++}`,
+    params
+  );
+
+  void logAdminView(req, "audit-events", { page, total });
+  return sendSuccess(res, 200, {
+    items: rows,
+    page,
+    limit,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / limit))
+  });
+}));
+
+router.get("/activity-feed", asyncHandler(async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+  const offset = (page - 1) * limit;
+  const type = String(req.query.type || "all").toLowerCase();
+
+  const unions = [];
+  if (type === "all" || type === "load") {
+    unions.push(
+      `SELECT l.id::text AS id, 'load' AS type, l.created_at AS ts,
+              'load.posted' AS action,
+              l.code AS ref, l.origin || ' → ' || l.destination AS detail,
+              COALESCE(u.full_name, u.email, 'Shipper') AS actor
+       FROM loads l
+       LEFT JOIN users u ON u.id = l.shipper_id`
+    );
+  }
+  if (type === "all" || type === "bid") {
+    unions.push(
+      `SELECT b.id::text AS id, 'bid' AS type, b.created_at AS ts,
+              'bid.created' AS action,
+              l.code AS ref, 'PKR ' || b.amount::text AS detail,
+              COALESCE(u.full_name, u.email, 'Carrier') AS actor
+       FROM bids b
+       JOIN loads l ON l.id = b.load_id
+       LEFT JOIN users u ON u.id = b.carrier_id`
+    );
+  }
+  if (type === "all" || type === "shipment") {
+    unions.push(
+      `SELECT s.id::text AS id, 'shipment' AS type, s.updated_at AS ts,
+              'shipment.updated' AS action,
+              l.code AS ref, s.status AS detail,
+              COALESCE(u.full_name, u.email, 'User') AS actor
+       FROM shipments s
+       JOIN loads l ON l.id = s.load_id
+       LEFT JOIN users u ON u.id = s.carrier_id`
+    );
+  }
+  if (type === "all" || type === "audit") {
+    unions.push(
+      `SELECT a.id::text AS id, 'audit' AS type, a.created_at AS ts,
+              a.action AS action,
+              a.target_entity AS ref, COALESCE(a.target_id::text, '') AS detail,
+              COALESCE(u.full_name, u.email, 'System') AS actor
+       FROM audit_events a
+       LEFT JOIN users u ON u.id = a.actor_user_id`
+    );
+  }
+
+  if (!unions.length) {
+    return sendSuccess(res, 200, { items: [], page, limit, total: 0, totalPages: 1 });
+  }
+
+  const inner = unions.join(" UNION ALL ");
+  const { rows: countRows } = await query(`SELECT COUNT(*)::int AS c FROM (${inner}) feed`);
+  const total = countRows[0]?.c ?? 0;
+  const { rows } = await query(
+    `SELECT * FROM (${inner}) feed ORDER BY ts DESC LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+
+  void logAdminView(req, "activity-feed", { page, type, total });
+  return sendSuccess(res, 200, {
+    items: rows,
+    page,
+    limit,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / limit))
+  });
+}));
 
 module.exports = router;

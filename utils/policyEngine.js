@@ -106,13 +106,14 @@ function evaluateFleetPolicy(fleet, load, opts = {}) {
     };
   }
 
-  const loadWeight = Number(load?.weight ?? 0);
-  const maxCap = Number(fleet?.maxCapacityTons ?? 0);
-  if (loadWeight > 0 && maxCap > 0 && loadWeight > maxCap) {
+  const loadWeightKg = Number(load?.weight ?? 0);
+  const maxCapKg = Number(fleet?.maxCapacityTons ?? 0) * 1000;
+  if (loadWeightKg > 0 && maxCapKg > 0 && loadWeightKg > maxCapKg) {
+    const maxCapTons = Number(fleet?.maxCapacityTons ?? 0);
     return {
       ok: false,
       status: 409,
-      message: `Load weight exceeds your fleet capacity (${maxCap} tons max)`,
+      message: `Load weight exceeds your fleet capacity (${maxCapTons} tons max)`,
       code: "CAPACITY_EXCEEDED"
     };
   }

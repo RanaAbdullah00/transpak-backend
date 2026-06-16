@@ -78,18 +78,12 @@ describe("Notifications safety", { skip: hasIntegrationEnv() ? false : skipInteg
   });
 });
 
-const { hasDatabaseUrl, getBaseUrl, skipDbReason } = require("./helpers/config");
+const { hasDualRoleEnv, skipDualRoleReason } = require("./helpers/config");
 const { insertTestNotification, findUserIdByEmail, closePool } = require("./helpers/db");
-
-function hasDualRoleEnv() {
-  const password = process.env.PHASE1_RBAC_PASSWORD || process.env.E2E_SHIPPER_PASSWORD;
-  const email = process.env.E2E_DUAL_EMAIL || "transpak.phase1.dual@example.com";
-  return Boolean(hasDatabaseUrl() && password && email && getBaseUrl());
-}
 
 describe(
   "Dual-role includeAllRoles notification PATCH",
-  { skip: hasDualRoleEnv() ? false : skipDbReason() },
+  { skip: hasDualRoleEnv() ? false : skipDualRoleReason() },
   () => {
     let token;
     let userId;

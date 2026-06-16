@@ -58,6 +58,10 @@ describe("Phase 6 — Redis distributed core", () => {
   });
 
   it("NotificationDedupeAdapter uses RedisAdapter when redis enabled", async () => {
+    const prevUrl = process.env.REDIS_URL;
+    const prevStrict = process.env.ENABLE_STRICT_DISTRIBUTED;
+    delete process.env.REDIS_URL;
+    process.env.ENABLE_STRICT_DISTRIBUTED = "false";
     const { RedisAdapter } = require("../utils/notificationDedupeAdapter");
     const { getRedisClient, resetRedisClientForTests } = require("../utils/redisClient");
     resetRedisClientForTests();
@@ -65,15 +69,27 @@ describe("Phase 6 — Redis distributed core", () => {
     assert.equal(await adapter.has("phase6-key"), false);
     await adapter.set("phase6-key");
     assert.equal(await adapter.has("phase6-key"), true);
+    if (prevUrl != null) process.env.REDIS_URL = prevUrl;
+    else delete process.env.REDIS_URL;
+    if (prevStrict != null) process.env.ENABLE_STRICT_DISTRIBUTED = prevStrict;
+    else delete process.env.ENABLE_STRICT_DISTRIBUTED;
     resetRedisClientForTests();
   });
 
   it("socketEventDedupe blocks duplicate eventId claims", async () => {
+    const prevUrl = process.env.REDIS_URL;
+    const prevStrict = process.env.ENABLE_STRICT_DISTRIBUTED;
+    delete process.env.REDIS_URL;
+    process.env.ENABLE_STRICT_DISTRIBUTED = "false";
     const { claimDistributedEvent } = require("../utils/socketEventDedupe");
     const { resetRedisClientForTests } = require("../utils/redisClient");
     resetRedisClientForTests();
     assert.equal(await claimDistributedEvent("evt-phase6-a"), true);
     assert.equal(await claimDistributedEvent("evt-phase6-a"), false);
+    if (prevUrl != null) process.env.REDIS_URL = prevUrl;
+    else delete process.env.REDIS_URL;
+    if (prevStrict != null) process.env.ENABLE_STRICT_DISTRIBUTED = prevStrict;
+    else delete process.env.ENABLE_STRICT_DISTRIBUTED;
     resetRedisClientForTests();
   });
 });

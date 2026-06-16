@@ -104,5 +104,6 @@ describe("Marketplace expiry", { skip: skipExpiryReason() }, () => {
     const result = await runMarketplaceExpiryProcessor();
     assert.ok(typeof result.loadsExpired === "number");
     assert.ok(typeof result.bidsExpired === "number");
+    assert.ok(typeof result.capacityExpired === "number");
   });
 });

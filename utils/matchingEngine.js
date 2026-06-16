@@ -50,7 +50,7 @@ function buildCarrierMatchSql(fleet, startIndex) {
 
   const cap = fleet?.maxCapacityTons != null ? Number(fleet.maxCapacityTons) : null;
   if (cap != null && Number.isFinite(cap) && cap > 0) {
-    params.push(cap);
+    params.push(cap * 1000);
     clauses.push(`(l.weight IS NULL OR l.weight <= $${i++})`);
   }
 

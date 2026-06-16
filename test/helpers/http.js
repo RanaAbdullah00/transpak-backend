@@ -16,6 +16,9 @@ async function api(method, urlPath, opts = {}) {
   const headers = { Accept: "application/json" };
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   if (opts.workspace) headers["X-TransPak-Workspace"] = String(opts.workspace);
+  if (opts.headers && typeof opts.headers === "object") {
+    Object.assign(headers, opts.headers);
+  }
   let body;
   if (opts.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -116,10 +119,11 @@ async function placeBid(carrierToken, loadId, amount = 140000) {
 }
 
 /** Raw bid POST — for concurrency / idempotency tests. */
-async function placeBidRaw(carrierToken, loadId, amount = 140000) {
+async function placeBidRaw(carrierToken, loadId, amount = 140000, opts = {}) {
   return api("POST", "/api/bids", {
     token: carrierToken,
-    body: { loadId, amount: Number(amount) }
+    body: { loadId, amount: Number(amount) },
+    headers: opts.headers
   });
 }
 

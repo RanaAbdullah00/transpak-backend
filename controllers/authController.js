@@ -375,6 +375,13 @@ async function login(req, res) {
 
     // eslint-disable-next-line no-console
     console.log("[auth.login] complete", { status: 200, ms: Date.now() - loginStarted });
+    void writeAudit({
+      actorUserId: sessionUser.id,
+      action: "auth.login",
+      targetEntity: "user",
+      targetId: sessionUser.id,
+      metadata: { activeRole: sessionUser.activeRole }
+    });
     return sendSuccess(res, 200, loginAuthData(sessionUser, token), "Logged in");
   } catch (err) {
     const classified = classifyDbError(err);

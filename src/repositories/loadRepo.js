@@ -226,6 +226,19 @@ function buildListWhere(filters = {}) {
 
     );
 
+    params.push(uid);
+
+    clauses.push(
+
+      `NOT EXISTS (
+        SELECT 1 FROM bids b
+        WHERE b.load_id = l.id
+          AND b.status IN ${ACTIVE_BID_STATUSES_SQL}
+          AND b.carrier_id <> $${i++}
+      )`
+
+    );
+
   }
 
 

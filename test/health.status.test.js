@@ -29,6 +29,6 @@ describe("Health status resolution", () => {
       "utf8"
     );
     assert.ok(src.includes("tp:deploy-ok"));
-    assert.ok(src.includes("setMismatch(false)"));
+    assert.ok(src.includes("setMode(null)"));
   });
 });
