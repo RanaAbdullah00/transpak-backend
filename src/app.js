@@ -100,6 +100,8 @@ function buildCorsMiddlewareConfig() {
     allowedHeaders: [
       "Content-Type",
       "Authorization",
+      "Idempotency-Key",
+      "X-Idempotency-Key",
       "X-Requested-With",
       "X-TransPak-Workspace",
       "X-TransPak-User-Id",

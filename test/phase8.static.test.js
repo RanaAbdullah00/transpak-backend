@@ -89,6 +89,8 @@ describe("Phase 8 — deployment headers", () => {
     assert.ok(corsIdx >= 0 && apiIdx > corsIdx, "CORS middleware must run before /api rate limiter");
     assert.ok(src.includes("X-TransPak-Workspace"));
     assert.ok(src.includes("X-TransPak-User-Id"));
+    assert.ok(src.includes("Idempotency-Key"));
+    assert.ok(src.includes("X-Idempotency-Key"));
     assert.ok(src.includes(".pages.dev"));
     assert.ok(src.includes("optionsSuccessStatus"));
   });

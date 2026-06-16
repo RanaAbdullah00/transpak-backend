@@ -26,7 +26,7 @@ function trackingRefKey(load) {
 
 async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
   const { rows: loadRows } = await query(
-    `SELECT l.id, l.code, l.origin, l.destination, l.status, l.assigned_carrier_id, l.pickup_date,
+    `SELECT l.id, l.code, l.origin, l.destination, l.status, l.shipper_id, l.assigned_carrier_id, l.pickup_date,
             COALESCE(uc.full_name, uc.email, 'Carrier') AS carrier_name,
             uc.phone AS carrier_phone,
             t.license_plate AS truck_plate,
@@ -98,6 +98,8 @@ async function buildTrackingUpdatePayload(loadId, lat, lng, extra = {}) {
     origin,
     destination,
     distanceKm: distanceKm != null && distanceKm > 0 ? distanceKm : null,
+    shipperId: load.shipper_id ? String(load.shipper_id) : null,
+    carrierId: load.assigned_carrier_id ? String(load.assigned_carrier_id) : null,
     carrierName: load.carrier_name || null,
     carrierPhone: load.carrier_phone || null,
     vehicleReg: load.truck_plate || null,
