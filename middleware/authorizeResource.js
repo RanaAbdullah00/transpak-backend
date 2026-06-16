@@ -33,20 +33,19 @@ function requireLoadRead(paramName = "id") {
       );
       const load = rows[0];
       if (!load) return sendError(res, 404, "Not found", null, "NOT_FOUND");
-      if (!canReadLoad(load, req.auth)) {
-        return sendForbidden(res, "You do not have access to this load", FORBIDDEN_CODES.FORBIDDEN_RESOURCE);
+      if (canReadLoad(load, req.auth)) {
+        req.loadRow = load;
+        return next();
       }
-      if (
-        hasAccountRole(req.auth, "carrier") &&
-        String(load.assigned_carrier_id || "") !== String(req.auth.userId)
-      ) {
+      if (hasAccountRole(req.auth, "carrier")) {
         const match = await assertCarrierCanAccessLoad(req.auth.userId, load);
-        if (!match.ok) {
-          return sendError(res, match.status, match.message, null, match.code);
+        if (match.ok) {
+          req.loadRow = load;
+          return next();
         }
+        return sendError(res, match.status, match.message, null, match.code);
       }
-      req.loadRow = load;
-      return next();
+      return sendForbidden(res, "You do not have access to this load", FORBIDDEN_CODES.FORBIDDEN_RESOURCE);
     } catch (err) {
       return sendError(res, 500, err.message || "Server error", null, "SERVER_ERROR");
     }

@@ -60,8 +60,8 @@ function forbidUnlessAdmin(res, auth) {
 
 /**
  * Read access for a load row (DB or API shape).
- * Carriers: open marketplace loads only, or loads they are assigned to.
- * Shippers: own loads. Admin: all.
+ * Shippers: own loads. Assigned carrier: their loads.
+ * Other carrier marketplace access is enforced in requireLoadRead via matchingEngine.
  */
 function canReadLoad(load, auth) {
   if (!load || !auth?.userId) return false;
@@ -71,9 +71,6 @@ function canReadLoad(load, auth) {
   const carrierId = String(load.assigned_carrier_id ?? load.assignedCarrierId ?? "");
   if (shipperId === userId) return true;
   if (carrierId && carrierId === userId) return true;
-
-  const status = String(load.status || "").toLowerCase();
-  if (hasAccountRole(auth, "carrier") && status === "open") return true;
   return false;
 }
 
