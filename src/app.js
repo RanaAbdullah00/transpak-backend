@@ -254,7 +254,9 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
           missing: Array.isArray(schema.missing) ? schema.missing : [],
           requiredMigration: schema.requiredMigration || null,
           message: schema.message || null,
-          booting: Boolean(schema.booting)
+          booting: Boolean(schema.booting),
+          notificationDedupeConstraint:
+            schema.notificationDedupeConstraint || dbHealth.notificationDedupeConstraint || null
         },
         schemaVersion: dbHealth.schemaVersion || schema.version || "023",
         migrationRequired: dbHealth.migrationRequired,
@@ -264,6 +266,28 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         socketEngine: realtimeHub.isEngineReady() ? "ready" : "missing",
         sockets: realtimeHub.getConnectedSocketCount(),
         ops: getOpsSnapshot({ includeRecent: false })
+      }
+    });
+  });
+
+  app.get("/api/health/db", async (req, res) => {
+    const { resolveDatabaseHealth } = require("../utils/healthStatus");
+    const { verifyNotificationDedupeConstraint } = require("../db/schemaGuard");
+    const { getPool } = require("../db/pool");
+    const dbHealth = await resolveDatabaseHealth(dbState, process.uptime());
+    let constraint = dbHealth.notificationDedupeConstraint || null;
+    if (!constraint && getPool()) {
+      constraint = await verifyNotificationDedupeConstraint(getPool());
+    }
+    const ok = dbHealth.db === "ready" && Boolean(constraint?.ok);
+    return res.status(ok ? 200 : 503).json({
+      success: ok,
+      data: {
+        db: dbHealth.db,
+        dbPing: dbHealth.dbPing,
+        schema: dbHealth.schema,
+        notificationDedupeConstraint: constraint,
+        schemaDrift: constraint?.ok === false
       }
     });
   });

@@ -92,6 +92,40 @@ async function tableExists(pool, table) {
   return rows.length > 0;
 }
 
+/** Migration 032 — notification dedupe constraint required for ON CONFLICT inserts. */
+async function verifyNotificationDedupeConstraint(pool) {
+  if (!pool) {
+    return { ok: false, constraint: "uq_notifications_receiver_dedupe_full", message: "pool unavailable" };
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT conname
+       FROM pg_constraint
+       WHERE conrelid = 'notifications'::regclass
+         AND conname = 'uq_notifications_receiver_dedupe_full'
+       LIMIT 1`
+    );
+    const ok = rows.length > 0;
+    if (!ok) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[db] NOTIFICATION SCHEMA DRIFT: missing constraint uq_notifications_receiver_dedupe_full — run migration 032_notifications_dedupe_constraint.sql"
+      );
+    }
+    return {
+      ok,
+      constraint: "uq_notifications_receiver_dedupe_full",
+      message: ok ? null : "missing uq_notifications_receiver_dedupe_full"
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      constraint: "uq_notifications_receiver_dedupe_full",
+      message: err?.message || "constraint check failed"
+    };
+  }
+}
+
 async function findMissingColumns(pool) {
   const missing = [];
   for (const req of REQUIRED_COLUMNS) {
@@ -114,16 +148,21 @@ async function findMissingColumns(pool) {
 async function verifySchema(pool, { silent = false } = {}) {
   const missingCols = await findMissingColumns(pool);
   const missing = missingCols.map((m) => `${m.table}.${m.column}`);
+  const notifyConstraint = await verifyNotificationDedupeConstraint(pool);
 
   const requiredMigration =
     missingCols.length > 0
       ? [...new Set(missingCols.map((m) => m.migration))].join(", ")
-      : null;
+      : !notifyConstraint.ok
+        ? "032_notifications_dedupe_constraint.sql"
+        : null;
 
-  const ok = missing.length === 0;
+  const ok = missing.length === 0 && notifyConstraint.ok;
   const message = ok
     ? null
-    : `DB MIGRATION REQUIRED: missing ${missing.join(", ")} — run: npm run db:migrate (migration ${requiredMigration || "023_notifications_realtime.sql"}, SQL version ${SCHEMA_VERSION})`;
+    : !notifyConstraint.ok
+      ? `DB MIGRATION REQUIRED: ${notifyConstraint.message} — run: npm run db:migrate (032_notifications_dedupe_constraint.sql)`
+      : `DB MIGRATION REQUIRED: missing ${missing.join(", ")} — run: npm run db:migrate (migration ${requiredMigration || "023_notifications_realtime.sql"}, SQL version ${SCHEMA_VERSION})`;
 
   if (!silent) {
     if (ok) {
@@ -141,7 +180,8 @@ async function verifySchema(pool, { silent = false } = {}) {
     schemaVersion: SCHEMA_VERSION,
     missing,
     requiredMigration,
-    message
+    message,
+    notificationDedupeConstraint: notifyConstraint
   };
 }
 
@@ -151,5 +191,6 @@ module.exports = {
   columnExists,
   tableExists,
   findMissingColumns,
-  verifySchema
+  verifySchema,
+  verifyNotificationDedupeConstraint
 };

@@ -17,7 +17,8 @@ function normalizeSchema(schema, dbState = {}) {
       missing: Array.isArray(schema.missing) ? schema.missing : [],
       requiredMigration: schema.requiredMigration || null,
       message: schema.message || null,
-      booting: Boolean(schema.booting)
+      booting: Boolean(schema.booting),
+      notificationDedupeConstraint: schema.notificationDedupeConstraint || null
     };
   }
   if (dbState.needsMigration && dbState.schema) {
@@ -117,6 +118,7 @@ async function resolveDatabaseHealth(dbState = {}, uptimeSeconds = 0, opts = {})
     db,
     dbPing,
     schema: { ...schema, booting: false },
+    notificationDedupeConstraint: schema.notificationDedupeConstraint || null,
     dbReady: db === "ready",
     booting: false,
     healthPhase: db === "ready" ? "ready" : db === "connecting" ? "booting" : "degraded",

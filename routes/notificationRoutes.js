@@ -80,7 +80,7 @@ router.get("/sync", protect, requireAnyRole(["shipper", "carrier", "admin"]), as
             role_type AS "roleType", title, message, read, created_at AS "createdAt"
      FROM notifications
      WHERE receiver_id = $1 AND ${scope.sql}${sinceClause}
-     ORDER BY created_at ASC
+     ORDER BY created_at DESC, id DESC
      LIMIT $${listParams.length}`,
     listParams
   );
@@ -113,7 +113,7 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
             role_type AS "roleType", title, message, read, created_at AS "createdAt"
      FROM notifications
      WHERE receiver_id = $1 AND ${scope.sql}${cursorClause}
-     ORDER BY created_at DESC
+     ORDER BY created_at DESC, id DESC
      LIMIT $${limitIdx}`,
     baseParams
   );

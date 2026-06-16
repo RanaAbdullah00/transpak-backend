@@ -5,6 +5,7 @@
 
 const EXACT_EXEMPT = new Set([
   "/health",
+  "/health/db",
   "/system/policy-health",
   "/auth/login",
   "/auth/register",
