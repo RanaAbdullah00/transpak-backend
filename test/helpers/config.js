@@ -32,6 +32,32 @@ function discoverViaScript() {
   }
 }
 
+const PRODUCTION_API = "https://transpak-backend-1.onrender.com";
+
+/** Resolve Phase-1 / gate-style E2E accounts (ONLY_EMAIL aliases + shared password). */
+function getE2ECredentials() {
+  const sharedPassword =
+    process.env.PHASE1_RBAC_PASSWORD ||
+    process.env.E2E_SHIPPER_PASSWORD ||
+    process.env.E2E_CARRIER_PASSWORD ||
+    "";
+  return {
+    shipperEmail: process.env.E2E_SHIPPER_EMAIL || process.env.E2E_SHIPPER_ONLY_EMAIL || "",
+    shipperPassword: process.env.E2E_SHIPPER_PASSWORD || sharedPassword,
+    carrierEmail: process.env.E2E_CARRIER_EMAIL || process.env.E2E_CARRIER_ONLY_EMAIL || "",
+    carrierPassword: process.env.E2E_CARRIER_PASSWORD || sharedPassword,
+    carrier2Email: process.env.E2E_CARRIER2_EMAIL || "",
+    carrier2Password: process.env.E2E_CARRIER2_PASSWORD || sharedPassword,
+    adminEmail: process.env.E2E_ADMIN_EMAIL || process.env.E2E_ADMIN_ONLY_EMAIL || "",
+    adminPassword: process.env.E2E_ADMIN_PASSWORD || sharedPassword
+  };
+}
+
+function hasPhase1ProductionEnv() {
+  const c = getE2ECredentials();
+  return Boolean(c.shipperEmail && c.shipperPassword && c.carrierEmail && c.carrierPassword);
+}
+
 function getBaseUrl() {
   const raw =
     process.env.QA_BASE_URL ||
@@ -40,6 +66,10 @@ function getBaseUrl() {
     process.env.VITE_API_URL ||
     "";
   if (raw) return String(raw).replace(/\/$/, "");
+
+  if (hasPhase1ProductionEnv()) {
+    return PRODUCTION_API;
+  }
 
   const fromFile = readPortFile();
   if (fromFile) {
@@ -58,16 +88,12 @@ function hasDatabaseUrl() {
 }
 
 function hasHttpCredentials() {
-  return Boolean(
-    process.env.E2E_SHIPPER_EMAIL &&
-      process.env.E2E_SHIPPER_PASSWORD &&
-      process.env.E2E_CARRIER_EMAIL &&
-      process.env.E2E_CARRIER_PASSWORD
-  );
+  return hasPhase1ProductionEnv();
 }
 
 function hasAdminCredentials() {
-  return Boolean(process.env.E2E_ADMIN_EMAIL && process.env.E2E_ADMIN_PASSWORD);
+  const c = getE2ECredentials();
+  return Boolean(c.adminEmail && c.adminPassword);
 }
 
 function hasSecondCarrier() {
@@ -80,7 +106,7 @@ function hasIntegrationEnv() {
 }
 
 function skipIntegrationReason() {
-  return "Set E2E_SHIPPER_EMAIL, E2E_SHIPPER_PASSWORD, E2E_CARRIER_EMAIL, E2E_CARRIER_PASSWORD and run API at QA_BASE_URL";
+  return "Set PHASE1_RBAC_PASSWORD plus E2E_SHIPPER_ONLY_EMAIL and E2E_CARRIER_ONLY_EMAIL (or standard E2E_* pairs) and QA_BASE_URL or use production Phase-1 accounts";
 }
 
 function skipDbReason() {
@@ -112,7 +138,7 @@ function hasDualRoleEnv() {
       process.env.E2E_BASE_URL ||
       process.env.VITE_API_URL
   );
-  return apiExplicit || hasHttpCredentials();
+  return apiExplicit || hasPhase1ProductionEnv();
 }
 
 function skipDualRoleReason() {
@@ -127,10 +153,12 @@ function skipDualRoleReason() {
 
 module.exports = {
   getBaseUrl,
+  getE2ECredentials,
   hasDatabaseUrl,
   hasHttpCredentials,
   hasAdminCredentials,
   hasSecondCarrier,
+  hasPhase1ProductionEnv,
   hasIntegrationEnv,
   skipIntegrationReason,
   skipDbReason,

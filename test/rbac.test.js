@@ -3,7 +3,7 @@
  */
 const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
-const { hasIntegrationEnv, skipIntegrationReason } = require("./helpers/config");
+const { hasIntegrationEnv, skipIntegrationReason, getE2ECredentials } = require("./helpers/config");
 const { api, login, createOpenLoad } = require("./helpers/http");
 
 describe("RBAC safety", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
@@ -12,16 +12,9 @@ describe("RBAC safety", { skip: hasIntegrationEnv() ? false : skipIntegrationRea
   let ownLoad;
 
   before(async () => {
-    shipper = await login(
-      process.env.E2E_SHIPPER_EMAIL,
-      process.env.E2E_SHIPPER_PASSWORD,
-      "shipper"
-    );
-    carrier = await login(
-      process.env.E2E_CARRIER_EMAIL,
-      process.env.E2E_CARRIER_PASSWORD,
-      "carrier"
-    );
+    const creds = getE2ECredentials();
+    shipper = await login(creds.shipperEmail, creds.shipperPassword, "shipper");
+    carrier = await login(creds.carrierEmail, creds.carrierPassword, "carrier");
     ownLoad = await createOpenLoad(shipper.token, {
       cargo: `RBAC self-exclusion ${Date.now()}`
     });
