@@ -1,11 +1,6 @@
 const { assertEventType } = require("./eventContractRegistry");
-const {
-  notifyUser: notifyUserCore,
-  notifyLoadPostedToCarriers,
-  notifyAdmins,
-  flushAllNotificationQueues,
-  dedupeKeyFromContent
-} = require("./notifyEvent");
+const notifyEvent = require("./notifyEvent");
+const { notifyAdmins: notifyAdminsDirect } = require("./adminNotify");
 
 /**
  * All persisted notifications must use a registry event type.
@@ -15,7 +10,7 @@ const {
 async function notifyUnified(event, payload) {
   const type = assertEventType(event);
   if (!payload?.receiverId || !payload?.message) return null;
-  return notifyUserCore({
+  return notifyEvent.notifyUser({
     receiverId: payload.receiverId,
     senderId: payload.senderId ?? null,
     roleType: payload.roleType,
@@ -28,8 +23,8 @@ async function notifyUnified(event, payload) {
 
 module.exports = {
   notifyUnified,
-  notifyLoadPostedToCarriers,
-  notifyAdmins,
-  flushAllNotificationQueues,
-  dedupeKeyFromContent
+  notifyLoadPostedToCarriers: notifyEvent.notifyLoadPostedToCarriers,
+  notifyAdmins: notifyAdminsDirect,
+  flushAllNotificationQueues: notifyEvent.flushAllNotificationQueues,
+  dedupeKeyFromContent: notifyEvent.dedupeKeyFromContent
 };

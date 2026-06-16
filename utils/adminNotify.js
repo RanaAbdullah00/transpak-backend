@@ -1,6 +1,9 @@
 const { query } = require("../db/pool");
-const { notifyUser, dedupeKeyFromContent } = require("./notifyEvent");
 const { buildDedupeKey } = require("./realtimeDispatch");
+
+function notifyDeps() {
+  return require("./notifyEvent");
+}
 
 const MAX_ADMIN_NOTIFY = Number(process.env.ADMIN_NOTIFY_LIMIT || 50);
 const CACHE_MS = Number(process.env.ADMIN_NOTIFY_CACHE_MS || 60000);
@@ -33,10 +36,10 @@ async function notifyAdmins({ senderId, title, type, message, idempotencyKey }) 
     const adminIds = await listAdminUserIds();
     if (!adminIds.length) return 0;
     const eventType = type || title;
-    const baseKey = idempotencyKey || dedupeKeyFromContent("admin", title, message);
+    const baseKey = idempotencyKey || notifyDeps().dedupeKeyFromContent("admin", title, message);
     let sent = 0;
     for (const adminId of adminIds) {
-      const ok = await notifyUser({
+      const ok = await notifyDeps().notifyUser({
         receiverId: adminId,
         senderId: senderId || null,
         roleType: "admin",

@@ -242,12 +242,18 @@ function flushAllNotificationQueues() {
   }
 }
 
-const { notifyAdmins } = require("./adminNotify");
-
 module.exports = {
   notifyUser,
   notifyLoadPostedToCarriers,
-  notifyAdmins,
   flushAllNotificationQueues,
   dedupeKeyFromContent
 };
+
+/** Lazy re-export — avoids circular init with adminNotify breaking notifyUser exports. */
+Object.defineProperty(module.exports, "notifyAdmins", {
+  enumerable: true,
+  configurable: true,
+  get() {
+    return require("./adminNotify").notifyAdmins;
+  }
+});
