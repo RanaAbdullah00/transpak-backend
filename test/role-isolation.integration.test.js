@@ -5,7 +5,7 @@ const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { hasIntegrationEnv, skipIntegrationReason } = require("./helpers/config");
+const { integrationSuiteSkipReason } = require("./helpers/config");
 const { api, login } = require("./helpers/http");
 
 const feRoot = path.join(__dirname, "..", "..", "transpak-frontend", "src");
@@ -24,7 +24,7 @@ describe("Role isolation — static dashboard scoping", () => {
   });
 });
 
-describe("Role isolation — HTTP snapshot", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("Role isolation — HTTP snapshot", { skip: integrationSuiteSkipReason() }, () => {
   let shipper;
   let carrier;
 
@@ -46,7 +46,7 @@ describe("Role isolation — HTTP snapshot", { skip: hasIntegrationEnv() ? false
       token: shipper.token
     });
     assert.equal(res.status, 200);
-    const data = res.body?.data ?? res.body;
+    const data = res.payload ?? res.data;
     assert.ok(data?.shipper != null || data?.loads != null);
   });
 
@@ -55,7 +55,7 @@ describe("Role isolation — HTTP snapshot", { skip: hasIntegrationEnv() ? false
       token: carrier.token
     });
     assert.equal(res.status, 200);
-    const data = res.body?.data ?? res.body;
+    const data = res.payload ?? res.data;
     assert.ok(data?.carrier != null || data?.bids != null);
   });
 });

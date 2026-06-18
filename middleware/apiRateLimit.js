@@ -1,12 +1,20 @@
 const rateLimit = require("express-rate-limit");
 
+function skipForIntegrationTestRun() {
+  return (
+    process.env.NODE_ENV !== "production" &&
+    process.env.INTEGRATION_SERVER_READY === "1" &&
+    process.env.DISABLE_LOGIN_RATE_LIMIT === "1"
+  );
+}
+
 /** Global API rate limit (per IP). Tuned for FYP / small deployments. */
 const globalApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.API_RATE_LIMIT_MAX || 500),
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  skip: (req) => req.method === "OPTIONS",
+  skip: (req) => req.method === "OPTIONS" || skipForIntegrationTestRun(),
   message: {
     success: false,
     message: "Too many requests, please try again later",

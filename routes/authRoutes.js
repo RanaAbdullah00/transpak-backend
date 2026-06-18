@@ -25,6 +25,10 @@ const loginLimiter = rateLimit({
   limit: 20,
   standardHeaders: "draft-7",
   legacyHeaders: false,
+  skip: () =>
+    process.env.NODE_ENV !== "production" &&
+    process.env.INTEGRATION_SERVER_READY === "1" &&
+    process.env.DISABLE_LOGIN_RATE_LIMIT === "1",
   message: {
     success: false,
     message: "Too many login attempts, please try again later",

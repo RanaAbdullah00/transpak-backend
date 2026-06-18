@@ -5,8 +5,7 @@ const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
 const {
-  hasIntegrationEnv,
-  skipIntegrationReason,
+  integrationSuiteSkipReason,
   hasDatabaseUrl,
   skipDbReason,
   hasSecondCarrier
@@ -27,7 +26,7 @@ const {
   closePool
 } = require("./helpers/db");
 
-const skip = hasIntegrationEnv() ? false : skipIntegrationReason();
+const skip = integrationSuiteSkipReason();
 
 describe("Phase 7 — RBAC penetration", { skip }, () => {
   let shipper;

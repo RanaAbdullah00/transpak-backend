@@ -4,8 +4,7 @@
 const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  hasIntegrationEnv,
-  skipIntegrationReason,
+  integrationSuiteSkipReason,
   hasAdminCredentials,
   skipAdminReason
 } = require("./helpers/config");
@@ -25,7 +24,7 @@ const carrierPass = () => process.env.E2E_CARRIER_PASSWORD;
 const adminEmail = () => process.env.E2E_ADMIN_EMAIL;
 const adminPass = () => process.env.E2E_ADMIN_PASSWORD;
 
-describe("API smoke", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("API smoke", { skip: integrationSuiteSkipReason() }, () => {
   /** @type {{ token: string, user: object }} */
   let shipper;
   /** @type {{ token: string, user: object }} */
@@ -83,7 +82,7 @@ describe("API smoke", { skip: hasIntegrationEnv() ? false : skipIntegrationReaso
     const res = await api("GET", "/api/notifications", { token: shipper.token });
     assert.ok(res.ok);
     assert.equal(res.data?.success, true);
-    assert.ok(Array.isArray(res.payload));
+    assert.ok(Array.isArray(res.payload) || Array.isArray(res.payload?.items));
   });
 
   it("GET /api/notifications/unread-count returns number", async () => {

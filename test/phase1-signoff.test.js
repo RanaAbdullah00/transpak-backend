@@ -5,7 +5,7 @@ const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { hasIntegrationEnv, skipIntegrationReason, skipAdminReason } = require("./helpers/config");
+const { integrationSuiteSkipReason, skipAdminReason } = require("./helpers/config");
 const { api, login } = require("./helpers/http");
 
 const root = path.join(__dirname, "..");
@@ -69,7 +69,7 @@ describe("Phase 1 — deployment & error safety (static)", () => {
 
 describe(
   "Phase 1 — live HTTP sign-off",
-  { skip: hasIntegrationEnv() ? false : skipIntegrationReason() },
+  { skip: integrationSuiteSkipReason() },
   () => {
     let shipperA;
     let carrierA;
@@ -106,9 +106,12 @@ describe(
     it("blocks cross-user load read by id", async () => {
       const mine = await api("GET", "/api/loads/mine", { token: shipperA.token });
       const loads = Array.isArray(mine.payload) ? mine.payload : [];
-      if (!loads.length) return;
+      const booked = loads.find((l) => l.status && l.status !== "open");
+      if (!booked) return;
+      const assigned = booked.assigned_carrier_id || booked.assignedCarrierId;
       const intruder = carrierB || carrierA;
-      const res = await api("GET", `/api/loads/${loads[0].id}`, { token: intruder.token });
+      if (assigned && String(intruder.user?.id) === String(assigned)) return;
+      const res = await api("GET", `/api/loads/${booked.id}`, { token: intruder.token });
       assert.equal(res.status, 403);
     });
 

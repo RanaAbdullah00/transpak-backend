@@ -19,6 +19,7 @@ const {
 } = require("../utils/resourceAuth");
 
 const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
+const { markListingRequested } = require("../utils/capacityListingLifecycle");
 
 const router = express.Router();
 
@@ -57,7 +58,12 @@ router.post(
     );
     const listing = listingRows[0];
     if (!listing) return sendError(res, 404, "Listing not found");
-    if (listing.status !== "open") return sendError(res, 409, "Listing is not open");
+    if (listing.status !== "open" && listing.status !== "requested") {
+      return sendError(res, 409, "Listing is not open for requests", null, "LISTING_NOT_OPEN");
+    }
+    if (listing.status === "expired" || listing.status === "closed") {
+      return sendError(res, 409, "Listing is no longer available", null, "LISTING_EXPIRED");
+    }
     if (requestedKg > Number(listing.remaining_space_kg)) {
       return sendError(res, 400, "Requested capacity exceeds remaining space");
     }
@@ -150,6 +156,8 @@ router.post(
       payload: { requestId: rows[0].id, listingId, status: "request_sent" }
     });
 
+    await markListingRequested(listingId);
+
     return sendSuccess(res, 201, rows[0], "Request sent");
   }
 );
@@ -237,7 +245,10 @@ async function transitionRequest(req, res, nextStatus) {
       await client.query(
         `UPDATE carrier_space_listings
          SET remaining_space_kg = remaining_space_kg - $2,
-             status = CASE WHEN remaining_space_kg - $2 <= 0 THEN 'closed' ELSE status END,
+             status = CASE
+               WHEN remaining_space_kg - $2 <= 0 THEN 'accepted'
+               ELSE 'active'
+             END,
              updated_at = now()
          WHERE id = $1`,
         [row.listing_id, row.requested_kg]
@@ -482,7 +493,15 @@ router.put(
   requireAnyRole(["shipper", "carrier"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  asyncHandler((req, res) => partyTransition(req, res, "in_transit"))
+  asyncHandler((req, res) =>
+    sendError(
+      res,
+      410,
+      "Use PUT /api/shipments/:id/status to advance shipment lifecycle",
+      null,
+      "SPACE_TRANSITION_DEPRECATED"
+    )
+  )
 );
 
 router.put(
@@ -491,7 +510,15 @@ router.put(
   requireAnyRole(["shipper", "carrier"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
   validate,
-  asyncHandler((req, res) => partyTransition(req, res, "completed"))
+  asyncHandler((req, res) =>
+    sendError(
+      res,
+      410,
+      "Use PUT /api/shipments/:id/status to advance shipment lifecycle",
+      null,
+      "SPACE_TRANSITION_DEPRECATED"
+    )
+  )
 );
 
 module.exports = router;

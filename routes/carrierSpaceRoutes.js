@@ -13,6 +13,11 @@ const {
   sendForbidden,
   FORBIDDEN_CODES
 } = require("../utils/resourceAuth");
+const {
+  closeCapacityListing,
+  reopenCapacityListing,
+  expireCapacityListing
+} = require("../utils/capacityListingLifecycle");
 const { validateAvailabilitySlots } = require("../utils/availabilitySlots");
 const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 
@@ -106,7 +111,7 @@ router.get("/mine", protect, requireRole("carrier"), async (req, res) => {
                AND r.status IN ('active', 'in_transit')) AS "activeRequestCount"
      FROM carrier_space_listings
      WHERE carrier_id = $1
-       AND status <> 'closed'
+       AND status NOT IN ('closed', 'expired')
        AND NOT (
          status = 'open'
          AND (
@@ -243,8 +248,7 @@ router.patch(
     body("ratePerKg").optional({ nullable: true }).toFloat().isFloat({ min: 0 }),
     body("availableFrom").optional({ nullable: true }).isISO8601().toDate(),
     body("availabilitySlots").optional({ nullable: true }).isArray({ max: 12 }),
-    body("notes").optional().trim().isLength({ max: 500 }),
-    body("status").optional().isIn(["open", "booked", "closed"])
+    body("notes").optional().trim().isLength({ max: 500 })
   ],
   validate,
   async (req, res) => {
@@ -255,51 +259,17 @@ router.patch(
     if (!canMutateCarrierSpaceListing(row, req.auth)) {
       return sendForbidden(res, "You do not own this listing", FORBIDDEN_CODES.FORBIDDEN_OWNER);
     }
-    const status = req.body.status != null ? String(req.body.status) : null;
-    const hasFieldEdits =
-      req.body.origin != null ||
-      req.body.destination != null ||
-      req.body.truckCapacityKg != null ||
-      req.body.remainingSpaceKg != null ||
-      req.body.vehicleType != null ||
-      req.body.ratePerKg !== undefined ||
-      req.body.availableFrom !== undefined ||
-      req.body.availabilitySlots !== undefined ||
-      req.body.notes !== undefined;
-
-    if (row.status === "closed" && status && status !== "closed") {
-      return sendError(res, 409, "Closed listings cannot be reactivated", null, "LISTING_CLOSED");
+    if (row.status !== "open") {
+      return sendError(res, 409, "Only open listings can be edited", null, "LISTING_LOCKED");
     }
-    if (status === "closed") {
-      const { rows: activeAgreements } = await dbQuery(
-        `SELECT 1 FROM carrier_space_requests
-         WHERE listing_id = $1 AND status IN ('active', 'in_transit')
-         LIMIT 1`,
-        [id]
-      );
-      if (activeAgreements.length) {
-        return sendError(
-          res,
-          409,
-          "Listing has an active agreement and cannot be closed",
-          null,
-          "LISTING_ACTIVE"
-        );
-      }
-    }
-    if (hasFieldEdits) {
-      if (row.status !== "open") {
-        return sendError(res, 409, "Only open listings can be edited", null, "LISTING_LOCKED");
-      }
-      const { rows: engaged } = await dbQuery(
-        `SELECT 1 FROM carrier_space_requests
-         WHERE listing_id = $1 AND status IN ('active', 'in_transit', 'completed')
-         LIMIT 1`,
-        [id]
-      );
-      if (engaged.length) {
-        return sendError(res, 409, "Listing has accepted requests and cannot be edited", null, "LISTING_LOCKED");
-      }
+    const { rows: engaged } = await dbQuery(
+      `SELECT 1 FROM carrier_space_requests
+       WHERE listing_id = $1 AND status IN ('active', 'in_transit', 'delivered', 'completed', 'accepted')
+       LIMIT 1`,
+      [id]
+    );
+    if (engaged.length) {
+      return sendError(res, 409, "Listing has accepted requests and cannot be edited", null, "LISTING_LOCKED");
     }
 
     const rem = req.body.remainingSpaceKg != null ? Number(req.body.remainingSpaceKg) : null;
@@ -338,7 +308,6 @@ router.patch(
            available_from = CASE WHEN $9::text = '__skip__' THEN available_from WHEN $9 IS NULL THEN NULL ELSE $9::date END,
            availability_slots = CASE WHEN $10::text = '__skip__' THEN availability_slots WHEN $10 IS NULL THEN NULL ELSE $10::jsonb END,
            notes = CASE WHEN $11::text IS NOT NULL THEN $11 ELSE notes END,
-           status = COALESCE($12, status),
            updated_at = now()
        WHERE id = $1
        RETURNING id, origin, destination, truck_capacity_kg AS "truckCapacityKg",
@@ -361,22 +330,61 @@ router.patch(
           : availabilitySlotsValue
             ? JSON.stringify(availabilitySlotsValue)
             : null,
-        req.body.notes !== undefined ? (req.body.notes ? String(req.body.notes).trim() : null) : null,
-        status
+        req.body.notes !== undefined ? (req.body.notes ? String(req.body.notes).trim() : null) : null
       ]
     );
-    const updated = rows[0];
-    if (updated && status === "closed") {
-      void notifyAdmins({
-        senderId: req.auth.userId,
-        title: "SPACE_CLOSED",
-        type: "SPACE_CLOSED",
-        message: `[Platform] Capacity listing closed: ${updated.origin} → ${updated.destination}`,
-        idempotencyKey: buildDedupeKey(["ADMIN", "SPACE_CLOSED", id])
-      });
-    }
-    return sendSuccess(res, 200, updated);
+    return sendSuccess(res, 200, rows[0]);
   }
+);
+
+function listingLifecycleHandler(action) {
+  return async (req, res) => {
+    try {
+      const id = req.params.id;
+      const actor = { userId: req.auth.userId, isAdmin: hasAdminRole(req.auth) };
+      const updated = await action(id, actor);
+      if (updated && (updated.status === "closed" || updated.status === "expired")) {
+        void notifyAdmins({
+          senderId: req.auth.userId,
+          title: updated.status === "expired" ? "SPACE_EXPIRED" : "SPACE_CLOSED",
+          type: updated.status === "expired" ? "SPACE_EXPIRED" : "SPACE_CLOSED",
+          message: `[Platform] Capacity listing ${updated.status}: ${updated.origin} → ${updated.destination}`,
+          idempotencyKey: buildDedupeKey(["ADMIN", updated.status.toUpperCase(), id])
+        });
+      }
+      return sendSuccess(res, 200, updated);
+    } catch (err) {
+      const status = err.statusCode || 500;
+      return sendError(res, status, err.message, null, err.code || "SERVER_ERROR");
+    }
+  };
+}
+
+router.post(
+  "/:id/close",
+  protect,
+  requireRole("carrier"),
+  [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
+  validate,
+  listingLifecycleHandler(closeCapacityListing)
+);
+
+router.post(
+  "/:id/reopen",
+  protect,
+  requireRole("carrier"),
+  [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
+  validate,
+  listingLifecycleHandler(reopenCapacityListing)
+);
+
+router.post(
+  "/:id/expire",
+  protect,
+  requireAnyRole(["carrier", "admin"]),
+  [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid id"); })()))],
+  validate,
+  listingLifecycleHandler(expireCapacityListing)
 );
 
 router.delete(
@@ -388,10 +396,13 @@ router.delete(
   async (req, res) => {
     const id = req.params.id;
     const { rows: found } = await dbQuery(
-      `SELECT origin, destination FROM carrier_space_listings WHERE id = $1 AND carrier_id = $2`,
+      `SELECT origin, destination, status FROM carrier_space_listings WHERE id = $1 AND carrier_id = $2`,
       [id, req.auth.userId]
     );
     if (!found[0]) return sendError(res, 404, "Not found");
+    if (found[0].status !== "open") {
+      return sendError(res, 409, "Only open listings can be deleted", null, "LISTING_LOCKED");
+    }
     const { rows: activeAgreements } = await dbQuery(
       `SELECT 1 FROM carrier_space_requests
        WHERE listing_id = $1 AND status IN ('active', 'in_transit')

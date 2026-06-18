@@ -31,11 +31,20 @@ const { publishTrackingEvent } = require("../utils/trackingEventPublisher");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 const { writeAudit } = require("../utils/auditLog");
 const { invalidateAdminDashboardCache } = require("../utils/adminDashboardCache");
+const { loadStatusFromCanonicalTrack } = require("../utils/shipmentLoadSync");
+const { syncListingStatusFromShipment } = require("../utils/capacityListingLifecycle");
 const {
   hasAdminRole,
   assertShipmentParties,
   assertAssignedCarrier
 } = require("../utils/resourceAuth");
+
+function loadStatusFromShipmentCanonical(canonical, currentLoadStatus) {
+  if (canonical === "booked") return "booked";
+  if (canonical === "closed") return "closed";
+  if (["pickedup", "intransit", "delivered"].includes(canonical)) return "booked";
+  return currentLoadStatus;
+}
 
 const router = express.Router();
 router.use(shipmentsRouteLimiter);
@@ -152,7 +161,7 @@ const ACTIVE_SHIPMENT_SELECT = `
            ELSE 'BID'
          END AS "flowType",
          CASE
-           WHEN s.status NOT IN ('delivered', 'closed')
+           WHEN s.status NOT IN ('closed')
            THEN true
            ELSE false
          END AS "trackingEnabled"
@@ -160,7 +169,7 @@ const ACTIVE_SHIPMENT_SELECT = `
   JOIN loads l ON l.id = s.load_id
   LEFT JOIN users us ON us.id = l.shipper_id
   LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
-  WHERE s.status NOT IN ('delivered', 'closed')
+  WHERE s.status <> 'closed'
     AND (
       l.status = 'booked'
       OR l.assigned_carrier_id IS NOT NULL
@@ -180,7 +189,7 @@ const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
          s.id AS "shipmentId", s.status AS "shipmentStatus", s.updated_at AS "updatedAt",
          'BID' AS "flowType",
          CASE
-           WHEN s.status NOT IN ('delivered', 'closed')
+           WHEN s.status NOT IN ('closed')
            THEN true
            ELSE false
          END AS "trackingEnabled"
@@ -188,7 +197,7 @@ const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
   JOIN loads l ON l.id = s.load_id
   LEFT JOIN users us ON us.id = l.shipper_id
   LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
-  WHERE s.status NOT IN ('delivered', 'closed')
+  WHERE s.status <> 'closed'
     AND (
       l.status = 'booked'
       OR l.assigned_carrier_id IS NOT NULL
@@ -435,11 +444,12 @@ router.put(
         [shipment.id, canonical, null, "System"]
       );
 
-      // Keep loads.status loosely in sync for list screens.
-      const nextLoadStatus = canonical === "booked" ? "booked" : canonical === "closed" ? "closed" : load.status;
+      // Keep loads.status in sync for list screens.
+      const nextLoadStatus = loadStatusFromShipmentCanonical(canonical, load.status);
       if (nextLoadStatus && nextLoadStatus !== load.status) {
         await query(`UPDATE loads SET status = $2, updated_at = now() WHERE id = $1`, [load.id, nextLoadStatus]);
       }
+      await syncListingStatusFromShipment(load.id, canonical);
       if (canonical === "intransit") {
         await query(
           `UPDATE carrier_space_requests
@@ -448,11 +458,19 @@ router.put(
           [load.id]
         );
       }
-      if (canonical === "delivered" || canonical === "closed") {
+      if (canonical === "delivered") {
+        await query(
+          `UPDATE carrier_space_requests
+           SET status = 'delivered', updated_at = now()
+           WHERE load_id = $1 AND status IN ('active', 'in_transit', 'accepted')`,
+          [load.id]
+        );
+      }
+      if (canonical === "closed") {
         await query(
           `UPDATE carrier_space_requests
            SET status = 'completed', updated_at = now()
-           WHERE load_id = $1 AND status NOT IN ('completed', 'rejected')`,
+           WHERE load_id = $1 AND status NOT IN ('completed', 'rejected', 'expired')`,
           [load.id]
         );
       }
@@ -461,7 +479,7 @@ router.put(
         pickedup: { type: "SHIPMENT_PICKED_UP", title: "SHIPMENT_PICKED_UP" },
         intransit: { type: "SHIPMENT_IN_TRANSIT", title: "SHIPMENT_IN_TRANSIT" },
         delivered: { type: "DELIVERY_COMPLETED", title: "DELIVERY_COMPLETED" },
-        closed: { type: "DELIVERY_COMPLETED", title: "DELIVERY_COMPLETED" }
+        closed: { type: "REVIEW_PROMPT", title: "REVIEW_PROMPT" }
       };
       const notifyMeta = statusNotifyMap[canonical];
       if (notifyMeta) {
@@ -471,7 +489,10 @@ router.put(
         );
         const p = parties[0];
         const ref = load.code || String(load.id).slice(0, 8);
-        const msg = `Shipment ${ref} — ${canonical}`;
+        const msg =
+          canonical === "closed"
+            ? `Shipment ${ref} completed — rate your experience or skip for now`
+            : `Shipment ${ref} — ${canonical}`;
         const loadCode = load.code || ref;
         const statusPayload = { loadId: load.id, loadCode, status: canonical, ref: loadCode };
         if (p?.shipper_id) {

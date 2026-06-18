@@ -86,6 +86,7 @@ async function getProfile(req, res) {
         : [],
       full_name: user.fullName,
       phone: user.phone,
+      address: user.address,
       cnic_number: user.cnicNumber,
       cnic_image: user.cnicImage,
       cnic_image_back: user.cnicImageBack,
@@ -129,6 +130,7 @@ async function updateProfile(req, res) {
 
     const fullName = req.body?.full_name != null ? String(req.body.full_name).trim() : null;
     const phone = req.body?.phone != null ? String(req.body.phone).trim() : null;
+    const address = req.body?.address != null ? String(req.body.address).trim() : null;
     const cnic = req.body?.cnic_number != null ? String(req.body.cnic_number).trim() : null;
 
     const cnicImageFile = req.files?.cnic_image?.[0] || null;
@@ -138,6 +140,7 @@ async function updateProfile(req, res) {
     const next = {
       full_name: fullName ?? user.fullName ?? null,
       phone: phone ?? user.phone ?? null,
+      address: address != null ? (address === "" ? null : address) : user.address ?? null,
       cnic_number: user.cnicNumber || null,
       cnic_image: user.cnicImage || null,
       cnic_image_back: user.cnicImageBack || null,
@@ -230,11 +233,12 @@ async function updateProfile(req, res) {
         `UPDATE users
          SET full_name = $2,
              phone = $3,
-             cnic_number = COALESCE(cnic_number, $4),
-             cnic_image = COALESCE($5, cnic_image),
-             cnic_image_back = COALESCE($6, cnic_image_back),
-             profile_image = COALESCE($7, profile_image),
-             is_profile_complete = $8,
+             address = $4,
+             cnic_number = COALESCE(cnic_number, $5),
+             cnic_image = COALESCE($6, cnic_image),
+             cnic_image_back = COALESCE($7, cnic_image_back),
+             profile_image = COALESCE($8, profile_image),
+             is_profile_complete = $9,
              updated_at = now()
          WHERE id = $1
          RETURNING id`,
@@ -242,6 +246,7 @@ async function updateProfile(req, res) {
           req.auth.userId,
           next.full_name ?? null,
           next.phone ?? null,
+          pgText(next.address),
           next.cnic_number ?? null,
           pCnicImg,
           pCnicBack,
@@ -303,6 +308,7 @@ async function updateProfile(req, res) {
       profile: {
         full_name: finalUser.fullName,
         phone: finalUser.phone,
+        address: finalUser.address,
         email: finalUser.email,
         cnic_number: finalUser.cnicNumber,
         cnic_image: finalUser.cnicImage,

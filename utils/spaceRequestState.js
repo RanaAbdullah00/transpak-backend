@@ -1,9 +1,12 @@
 const ALLOWED = {
-  request_sent: new Set(["active", "rejected"]),
-  active: new Set(["in_transit", "completed"]),
-  in_transit: new Set(["completed"]),
+  request_sent: new Set(["active", "rejected", "expired", "accepted"]),
+  accepted: new Set(["active", "rejected", "expired"]),
+  active: new Set(["in_transit", "delivered", "completed"]),
+  in_transit: new Set(["delivered", "completed"]),
+  delivered: new Set(["completed"]),
   completed: new Set(),
-  rejected: new Set()
+  rejected: new Set(),
+  expired: new Set()
 };
 
 function assertSpaceTransition(from, to) {

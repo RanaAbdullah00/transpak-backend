@@ -3,11 +3,11 @@
  */
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { hasIntegrationEnv, skipIntegrationReason } = require("./helpers/config");
+const { skipConcurrencyReason } = require("./helpers/config");
 const { login, createOpenLoad, placeBidRaw } = require("./helpers/http");
-const { countBidsForLoadCarrier, deleteTestLoadCascade, closePool } = require("./helpers/db");
+const { countBidsForLoadCarrier, deleteTestLoadCascade, closePool, ensureUserProfileComplete } = require("./helpers/db");
 
-const skip = hasIntegrationEnv() ? false : skipIntegrationReason();
+const skip = skipConcurrencyReason();
 
 describe("Bid concurrency stress", { skip }, () => {
   let shipper;
@@ -24,6 +24,7 @@ describe("Bid concurrency stress", { skip }, () => {
       process.env.E2E_CARRIER_PASSWORD,
       "carrier"
     );
+    await ensureUserProfileComplete(shipper.user?.id);
   });
 
   after(async () => {

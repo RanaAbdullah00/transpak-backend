@@ -36,7 +36,7 @@ describe("Capacity expiry integration", { skip: skipReason() }, () => {
     await closePool();
   });
 
-  it("closes listing when visibility slot is in the past", async () => {
+  it("expires listing when visibility slot is in the past", async () => {
     const past = new Date(Date.now() - 60_000).toISOString();
     const { rows } = await query(
       `INSERT INTO carrier_space_listings
@@ -56,6 +56,6 @@ describe("Capacity expiry integration", { skip: skipReason() }, () => {
     await closeExpiredCapacityListings();
 
     const { rows: after } = await query(`SELECT status FROM carrier_space_listings WHERE id = $1`, [id]);
-    assert.equal(after[0].status, "closed");
+    assert.equal(after[0].status, "expired");
   });
 });

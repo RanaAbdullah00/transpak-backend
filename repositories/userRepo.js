@@ -43,6 +43,7 @@ function toAuthUser(row) {
 
     fullName: row.full_name || "",
     phone: row.phone || "",
+    address: row.address || "",
     cnicNumber: row.cnic_number || "",
     cnicImage: row.cnic_image || "",
     cnicImageBack: row.cnic_image_back || "",
@@ -54,7 +55,7 @@ function toAuthUser(row) {
 async function findById(id) {
   const { rows } = await query(
     `SELECT id, email, roles, active_role, blocked, verified,
-            full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
+            full_name, phone, address, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
      FROM users
      WHERE id = $1`,
     [id]
@@ -65,7 +66,7 @@ async function findById(id) {
 async function findRowByEmailWithPassword(email) {
   const { rows } = await query(
     `SELECT id, email, roles, active_role, blocked, verified,
-            full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete,
+            full_name, phone, address, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete,
             password_hash
      FROM users
      WHERE lower(trim(email)) = lower(trim($1))`,
@@ -77,7 +78,7 @@ async function findRowByEmailWithPassword(email) {
 async function findByEmail(email) {
   const { rows } = await query(
     `SELECT id, email, roles, active_role, blocked, verified,
-            full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
+            full_name, phone, address, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
      FROM users
      WHERE lower(trim(email)) = lower(trim($1))`,
     [String(email || "").trim().toLowerCase()]
@@ -94,7 +95,7 @@ async function findPhoneOwner(phone) {
 async function findByCnicNumber(cnicNumber) {
   const { rows } = await query(
     `SELECT id, email, roles, active_role, blocked, verified,
-            full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
+            full_name, phone, address, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete
      FROM users
      WHERE cnic_number = $1`,
     [String(cnicNumber || "").trim()]
@@ -220,7 +221,7 @@ async function setActiveRole(userId, nextRole) {
 }
 
 const USER_RETURNING = `id, email, roles, active_role, blocked, verified,
-  full_name, phone, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete`;
+  full_name, phone, address, cnic_number, cnic_image, cnic_image_back, profile_image, is_profile_complete`;
 
 /**
  * Atomically ensure role is on account (except admin) and set active_role.

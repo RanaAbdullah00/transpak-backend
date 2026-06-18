@@ -35,6 +35,25 @@ async function login(email, password, roleHint) {
   return { token, user, headers: { Authorization: `Bearer ${token}` } };
 }
 
+async function authedRequest(fn, { retries = 3, delayMs = 400 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const code = err.response?.data?.code;
+      const status = err.response?.status;
+      if (status === 401 && code === "AUTH_INVALID" && attempt < retries - 1) {
+        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   const shipperEmail = process.env.E2E_SHIPPER_EMAIL;
   const shipperPass = process.env.E2E_SHIPPER_PASSWORD;
@@ -54,19 +73,21 @@ async function main() {
   const shipper = await login(shipperEmail, shipperPass, "shipper");
   const pickupDate = new Date(Date.now() + 86400000 * 3).toISOString().slice(0, 10);
 
-  const loadRes = await axios.post(
-    `${BASE}/api/loads/create`,
-    {
-      cargo: "E2E QA load",
-      origin: "Lahore",
-      destination: "Karachi",
-      weight: 500,
-      vehicleType: "Truck",
-      expectedPrice: 150000,
-      pickupDate,
-      deadlineMinutes: 360
-    },
-    shipper.headers
+  const loadRes = await authedRequest(() =>
+    axios.post(
+      `${BASE}/api/loads/create`,
+      {
+        cargo: "E2E QA load",
+        origin: "Lahore",
+        destination: "Karachi",
+        weight: 500,
+        vehicleType: "Truck",
+        expectedPrice: 150000,
+        pickupDate,
+        deadlineMinutes: 360
+      },
+      { headers: shipper.headers }
+    )
   );
   const load = loadRes.data?.data;
   console.log("[e2e] load created", load?.code, load?.id);
@@ -84,12 +105,23 @@ async function main() {
   });
 
   const carrier = await login(carrierEmail, carrierPass, "carrier");
-  const bidRes = await axios.post(
-    `${BASE}/api/bids`,
-    { loadId: load.id, amount: 140000 },
-    carrier.headers
+  const bidRes = await authedRequest(() =>
+    axios.post(`${BASE}/api/bids`, { loadId: load.id, amount: 140000 }, { headers: carrier.headers })
   );
-  console.log("[e2e] bid placed", bidRes.data?.data?.id || bidRes.data?.data?.status);
+  const bid = bidRes.data?.data;
+  console.log("[e2e] bid placed", bid?.id || bid?.status);
+
+  const acceptRes = await axios.put(
+    `${BASE}/api/bids/${bid.id}/accept`,
+    {},
+    { headers: shipper.headers }
+  );
+  console.log("[e2e] bid accepted", acceptRes.data?.data?.status || acceptRes.status);
+
+  const activeRes = await axios.get(`${BASE}/api/shipments/active`, { headers: shipper.headers });
+  const active = activeRes.data?.data;
+  const activeList = Array.isArray(active) ? active : active?.items || [];
+  console.log("[e2e] active shipments", activeList.length);
 
   const trackRes = await axios.get(`${BASE}/api/shipments/track/${encodeURIComponent(load.code)}`, {
     headers: shipper.headers
@@ -102,7 +134,7 @@ async function main() {
     distanceKm: track?.distanceKm
   });
 
-  console.log("[e2e] OK — extend with bid accept when E2E credentials support it.");
+  console.log("[e2e] OK — load → bid → accept → tracking chain complete.");
 }
 
 main().catch((e) => {

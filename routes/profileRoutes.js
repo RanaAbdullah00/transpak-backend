@@ -47,6 +47,11 @@ router.put(
         }
         return true;
       }),
+    body("address")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ max: 500 })
+      .withMessage("address must be at most 500 chars"),
     body("cnic_number")
       .optional({ values: "falsy" })
       .trim()

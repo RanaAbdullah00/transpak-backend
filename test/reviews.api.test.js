@@ -3,7 +3,7 @@
  */
 const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
-const { hasIntegrationEnv, skipIntegrationReason } = require("./helpers/config");
+const { integrationSuiteSkipReason } = require("./helpers/config");
 const { api, login, healthCheck } = require("./helpers/http");
 
 const shipperEmail = () => process.env.E2E_SHIPPER_EMAIL;
@@ -11,7 +11,7 @@ const shipperPass = () => process.env.E2E_SHIPPER_PASSWORD;
 const carrierEmail = () => process.env.E2E_CARRIER_EMAIL;
 const carrierPass = () => process.env.E2E_CARRIER_PASSWORD;
 
-describe("Reviews API", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("Reviews API", { skip: integrationSuiteSkipReason() }, () => {
   /** @type {{ token: string, user: object }} */
   let shipper;
   /** @type {{ token: string, user: object }} */
@@ -47,7 +47,7 @@ describe("Reviews API", { skip: hasIntegrationEnv() ? false : skipIntegrationRea
   });
 });
 
-describe("Carrier capacity RBAC", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("Carrier capacity RBAC", { skip: integrationSuiteSkipReason() }, () => {
   /** @type {{ token: string }} */
   let carrier;
   /** @type {{ token: string }} */

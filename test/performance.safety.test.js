@@ -1,11 +1,11 @@
 /**
  * Phase 6 — Lightweight performance / safety checks.
  */
-const { describe, it } = require("node:test");
+const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { hasIntegrationEnv, skipIntegrationReason, hasAdminCredentials, skipAdminReason } = require("./helpers/config");
+const { integrationSuiteSkipReason, hasAdminCredentials, skipAdminReason } = require("./helpers/config");
 const { api, login, healthCheck } = require("./helpers/http");
 
 const FRONTEND_SRC = path.join(__dirname, "..", "..", "transpak-frontend", "src");
@@ -18,8 +18,18 @@ function readIfExists(filePath) {
   }
 }
 
-describe("Performance safety (HTTP timing)", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("Performance safety (HTTP timing)", { skip: integrationSuiteSkipReason() }, () => {
   const MAX_MS = Number(process.env.TEST_API_MAX_MS || 12000);
+  /** @type {{ token: string, user: object, email: string } | null} */
+  let carrier;
+
+  before(async () => {
+    carrier = await login(
+      process.env.E2E_CARRIER_EMAIL,
+      process.env.E2E_CARRIER_PASSWORD,
+      "carrier"
+    );
+  });
 
   it("health responds within budget", async () => {
     const t0 = Date.now();
@@ -30,11 +40,6 @@ describe("Performance safety (HTTP timing)", { skip: hasIntegrationEnv() ? false
   });
 
   it("carrier load list responds within budget", async () => {
-    const carrier = await login(
-      process.env.E2E_CARRIER_EMAIL,
-      process.env.E2E_CARRIER_PASSWORD,
-      "carrier"
-    );
     const t0 = Date.now();
     const res = await api("GET", "/api/loads/", { token: carrier.token });
     const ms = Date.now() - t0;
@@ -48,9 +53,14 @@ describe("Performance safety (HTTP timing)", { skip: hasIntegrationEnv() ? false
 describe("Admin dashboard timing", { skip: skipAdminReason() }, () => {
   const MAX_MS = Number(process.env.TEST_ADMIN_MAX_MS || 15000);
   const WARM_MAX_MS = Number(process.env.TEST_ADMIN_WARM_MAX_MS || 10000);
+  /** @type {{ token: string, user: object, email: string } | null} */
+  let admin;
+
+  before(async () => {
+    admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
+  });
 
   it("GET /admin/dashboard/live within budget", async () => {
-    const admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
     const t0 = Date.now();
     const res = await api("GET", "/api/admin/dashboard/live", { token: admin.token });
     const ms = Date.now() - t0;
@@ -60,7 +70,6 @@ describe("Admin dashboard timing", { skip: skipAdminReason() }, () => {
   });
 
   it("GET /admin/dashboard/live warm response within budget", async () => {
-    const admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
     await api("GET", "/api/admin/dashboard/live", { token: admin.token });
     const t0 = Date.now();
     const res = await api("GET", "/api/admin/dashboard/live", { token: admin.token });
@@ -70,7 +79,6 @@ describe("Admin dashboard timing", { skip: skipAdminReason() }, () => {
   });
 
   it("GET /admin/dashboard/widgets/loads within budget", async () => {
-    const admin = await login(process.env.E2E_ADMIN_EMAIL, process.env.E2E_ADMIN_PASSWORD, "admin");
     const t0 = Date.now();
     const res = await api("GET", "/api/admin/dashboard/widgets/loads", { token: admin.token });
     const ms = Date.now() - t0;

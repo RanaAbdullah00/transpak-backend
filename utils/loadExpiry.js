@@ -53,6 +53,24 @@ async function expireBidsOnNonOpenLoads(client = null) {
 }
 
 /**
+ * Cancel active bids on loads whose bidding window has ended.
+ * @param {import('pg').PoolClient} [client]
+ */
+async function expireBidsPastDeadline(client = null) {
+  const q = client ? client.query.bind(client) : query;
+  const { rowCount } = await q(
+    `UPDATE bids b
+     SET status = 'cancelled', updated_at = now()
+     FROM loads l
+     WHERE b.load_id = l.id
+       AND b.status IN ${ACTIVE_BID_STATUSES_SQL}
+       AND l.status = 'open'
+       AND l.created_at + ${BIDDING_DEADLINE_INTERVAL_SQL} < now()`
+  );
+  return rowCount || 0;
+}
+
+/**
  * Centralized marketplace expiry — safe to run on interval or before listings.
  */
 async function runMarketplaceExpiryProcessor() {
@@ -69,7 +87,8 @@ async function runMarketplaceExpiryProcessor() {
   if (!pool) {
     const loads = await expireStaleOpenLoads();
     const bids = await expireBidsOnNonOpenLoads();
-    return { loadsExpired: loads, bidsExpired: bids, capacityExpired };
+    const bidsPastDeadline = await expireBidsPastDeadline();
+    return { loadsExpired: loads, bidsExpired: bids, bidsPastDeadline, capacityExpired };
   }
 
   const client = await pool.connect();
@@ -77,8 +96,9 @@ async function runMarketplaceExpiryProcessor() {
     await client.query("BEGIN");
     const loadsExpired = await expireStaleOpenLoads(client);
     const bidsExpired = await expireBidsOnNonOpenLoads(client);
+    const bidsPastDeadline = await expireBidsPastDeadline(client);
     await client.query("COMMIT");
-    return { loadsExpired, bidsExpired, capacityExpired };
+    return { loadsExpired, bidsExpired, bidsPastDeadline, capacityExpired };
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -134,6 +154,7 @@ module.exports = {
   BIDDING_DEADLINE_INTERVAL_SQL,
   expireStaleOpenLoads,
   expireBidsOnNonOpenLoads,
+  expireBidsPastDeadline,
   runMarketplaceExpiryProcessor,
   startMarketplaceExpiryScheduler,
   stopMarketplaceExpiryScheduler

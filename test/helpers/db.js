@@ -112,6 +112,25 @@ async function insertTestNotification(receiverId, roleType, title, message) {
   return rows[0];
 }
 
+async function ensureUserProfileComplete(userId) {
+  if (!isUuid(userId)) return;
+  await query(
+    `UPDATE users
+     SET cnic_image = COALESCE(
+           NULLIF(trim(cnic_image), ''),
+           'https://res.cloudinary.com/demo/image/upload/sample.jpg'
+         ),
+         cnic_image_back = COALESCE(
+           NULLIF(trim(cnic_image_back), ''),
+           'https://res.cloudinary.com/demo/image/upload/sample.jpg'
+         ),
+         is_profile_complete = true,
+         updated_at = now()
+     WHERE id = $1`,
+    [userId]
+  );
+}
+
 async function closePool() {
   const pool = getPool();
   if (pool && typeof pool.end === "function") {
@@ -131,6 +150,7 @@ module.exports = {
   getLoadStatus,
   deleteTestLoadCascade,
   findUserIdByEmail,
+  ensureUserProfileComplete,
   insertTestNotification,
   closePool
 };

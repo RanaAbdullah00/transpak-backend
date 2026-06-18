@@ -5,7 +5,7 @@ const { describe, it, before } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { hasIntegrationEnv, skipIntegrationReason, hasAdminCredentials } = require("./helpers/config");
+const { integrationSuiteSkipReason, hasAdminCredentials } = require("./helpers/config");
 const { api, login } = require("./helpers/http");
 
 const root = path.join(__dirname, "..");
@@ -38,7 +38,7 @@ describe("Admin audit API — static", () => {
   });
 });
 
-describe("Admin audit API — HTTP", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("Admin audit API — HTTP", { skip: integrationSuiteSkipReason() }, () => {
   let shipper;
   let admin;
 
@@ -77,6 +77,6 @@ describe("Admin audit API — HTTP", { skip: hasIntegrationEnv() ? false : skipI
       token: admin.token
     });
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.body?.data?.rows) || Array.isArray(res.body?.data));
+    assert.ok(Array.isArray(res.payload?.items) || Array.isArray(res.payload?.rows) || Array.isArray(res.payload));
   });
 });

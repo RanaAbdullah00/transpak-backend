@@ -114,6 +114,8 @@ function skipDbReason() {
 }
 
 function skipConcurrencyReason() {
+  const server = integrationSuiteSkipReason();
+  if (server) return server;
   if (!hasIntegrationEnv()) return skipIntegrationReason();
   if (!hasSecondCarrier()) {
     return "Set E2E_CARRIER2_EMAIL and E2E_CARRIER2_PASSWORD for dual-carrier concurrency test";
@@ -122,6 +124,8 @@ function skipConcurrencyReason() {
 }
 
 function skipAdminReason() {
+  const server = integrationSuiteSkipReason();
+  if (server) return server;
   if (!hasIntegrationEnv()) return skipIntegrationReason();
   if (!hasAdminCredentials()) return "Set E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD for admin tests";
   return false;
@@ -151,6 +155,17 @@ function skipDualRoleReason() {
   return false;
 }
 
+/** Combined skip reason for HTTP integration suites (credentials + server readiness). */
+function integrationSuiteSkipReason() {
+  if (!hasIntegrationEnv()) return skipIntegrationReason();
+  const ready = String(process.env.INTEGRATION_SERVER_READY || "").trim();
+  if (ready === "1") return false;
+  if (ready === "0") {
+    return `API server unreachable at ${getBaseUrl()}. Start backend (npm start) or run npm run test:integration`;
+  }
+  return false;
+}
+
 module.exports = {
   getBaseUrl,
   getE2ECredentials,
@@ -161,6 +176,7 @@ module.exports = {
   hasPhase1ProductionEnv,
   hasIntegrationEnv,
   skipIntegrationReason,
+  integrationSuiteSkipReason,
   skipDbReason,
   skipConcurrencyReason,
   skipAdminReason,

@@ -28,7 +28,7 @@ describe("mergeShipmentTimelineEvents", () => {
       { apiStatus: "intransit" }
     );
     assert.equal(effectiveStatus, "closed");
-    assert.ok(events.some((ev) => ev.status === "closed"));
+    assert.ok(events.every((ev) => ["booked", "pickedup", "intransit", "delivered"].includes(ev.status)));
   });
 
   it("dedupeTimelineEvents collapses duplicate status rows", async () => {

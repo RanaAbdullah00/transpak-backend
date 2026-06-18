@@ -3,10 +3,10 @@
  */
 const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { hasIntegrationEnv, skipIntegrationReason } = require("./helpers/config");
+const { integrationSuiteSkipReason } = require("./helpers/config");
 const { api, login } = require("./helpers/http");
 
-describe("Notifications safety", { skip: hasIntegrationEnv() ? false : skipIntegrationReason() }, () => {
+describe("Notifications safety", { skip: integrationSuiteSkipReason() }, () => {
   let token;
   const dedupeTitle = `SAFETY_DEDUP_${Date.now()}`;
   const dedupeMessage = "Automated dedupe validation message";
