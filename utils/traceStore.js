@@ -84,7 +84,9 @@ async function getTraceById(traceId) {
        LIMIT 500`,
       [tid]
     );
-    if (rows.length) return { traceId: tid, spans: rows };
+    if (rows.length) {
+      return { traceId: tid, spans: mem.length > rows.length ? mem : rows };
+    }
   } catch {
     /* fall through */
   }

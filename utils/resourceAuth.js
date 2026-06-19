@@ -140,6 +140,23 @@ function assertAssignedCarrier(load, auth) {
   }
 }
 
+/** Shipment close — load owner shipper only. */
+function assertLoadShipper(load, auth) {
+  if (!hasAccountRole(auth, "shipper")) {
+    const err = new Error("Only the shipper may close this shipment");
+    err.statusCode = 403;
+    err.code = FORBIDDEN_CODES.FORBIDDEN_ROLE;
+    throw err;
+  }
+  const shipperId = String(load?.shipper_id ?? load?.shipperId ?? "");
+  if (!shipperId || shipperId !== uid(auth)) {
+    const err = new Error("Only the load shipper may close this shipment");
+    err.statusCode = 403;
+    err.code = FORBIDDEN_CODES.FORBIDDEN_OWNER;
+    throw err;
+  }
+}
+
 function canMutateBidAsShipper(bidRow, auth) {
   if (!bidRow || !auth?.userId) return false;
   return String(bidRow.shipper_id ?? bidRow.shipperId) === uid(auth);
@@ -181,6 +198,7 @@ module.exports = {
   canAccessShipmentParties,
   assertShipmentParties,
   assertAssignedCarrier,
+  assertLoadShipper,
   canMutateBidAsShipper,
   canMutateBidAsCarrier,
   sanitizePublicTrucks

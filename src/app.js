@@ -265,7 +265,11 @@ function createApp({ uploadsDir, dbState = { ready: true, error: null } }) {
         distributed,
         socketEngine: realtimeHub.isEngineReady() ? "ready" : "missing",
         sockets: realtimeHub.getConnectedSocketCount(),
-        ops: getOpsSnapshot({ includeRecent: false })
+        ops: getOpsSnapshot({ includeRecent: false }),
+        integrationTestBypass:
+          process.env.NODE_ENV !== "production" &&
+          process.env.INTEGRATION_SERVER_READY === "1" &&
+          process.env.DISABLE_LOGIN_RATE_LIMIT === "1"
       }
     });
   });

@@ -35,8 +35,10 @@ const { loadStatusFromCanonicalTrack } = require("../utils/shipmentLoadSync");
 const { syncListingStatusFromShipment } = require("../utils/capacityListingLifecycle");
 const {
   hasAdminRole,
+  hasAccountRole,
   assertShipmentParties,
-  assertAssignedCarrier
+  assertAssignedCarrier,
+  assertLoadShipper
 } = require("../utils/resourceAuth");
 
 function loadStatusFromShipmentCanonical(canonical, currentLoadStatus) {
@@ -397,7 +399,7 @@ router.get(
 router.put(
   "/:id/status",
   protect,
-  requireRole("carrier"),
+  requireAnyRole(["shipper", "carrier"]),
   withIdempotencyKey("shipment_status"),
   shipmentIdParam,
   shipmentStatusPutValidators,
@@ -407,7 +409,6 @@ router.put(
       const load = await resolveLoadForRef(req.params.id);
       if (!load) return sendError(res, 404, "Not found");
       assertTrackAccessOrThrow(load, req.auth);
-      assertAssignedCarrier(load, req.auth);
 
       const { status } = req.body || {};
       const nextRaw = String(status || "").trim();
@@ -418,6 +419,20 @@ router.put(
       if (!check.ok) return sendError(res, 400, check.message);
 
       const canonical = check.canonical;
+
+      if (canonical === "closed") {
+        assertLoadShipper(load, req.auth);
+        const currentCanonical = normalizeShipmentStatus(current) || "posted";
+        if (currentCanonical !== "delivered") {
+          return sendError(res, 400, "Shipment can only be closed after delivery");
+        }
+      } else {
+        if (!hasAccountRole(req.auth, "carrier")) {
+          return sendError(res, 403, "Only the assigned carrier may update shipment status");
+        }
+        assertAssignedCarrier(load, req.auth);
+      }
+
       if (check.same) {
         const history = await getShipmentHistory(shipment.id);
         return sendSuccess(

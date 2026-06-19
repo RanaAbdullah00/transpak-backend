@@ -1,6 +1,7 @@
 const { getBaseUrl } = require("./config");
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.INTEGRATION_HEALTH_TIMEOUT_MS || 5000);
+// Health includes DB/schema probes; local dev often exceeds 5s.
+const DEFAULT_TIMEOUT_MS = Number(process.env.INTEGRATION_HEALTH_TIMEOUT_MS || 20000);
 
 /**
  * Probe /api/health on the configured QA base URL.
@@ -34,4 +35,21 @@ async function waitForServer(baseUrl = getBaseUrl(), { timeoutMs = 30000, interv
   return false;
 }
 
-module.exports = { isServerReachable, waitForServer };
+/** True when API health reports integration rate-limit bypass (server env). */
+async function serverHasIntegrationBypass(baseUrl = getBaseUrl(), opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const url = `${String(baseUrl).replace(/\/$/, "")}/api/health`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+    const data = await res.json().catch(() => null);
+    return Boolean(data?.data?.integrationTestBypass);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+module.exports = { isServerReachable, waitForServer, serverHasIntegrationBypass };
