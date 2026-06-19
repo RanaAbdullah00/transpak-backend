@@ -47,7 +47,8 @@ describe("Role isolation — HTTP snapshot", { skip: integrationSuiteSkipReason(
     });
     assert.equal(res.status, 200);
     const data = res.payload ?? res.data;
-    assert.ok(data?.shipper != null || data?.loads != null);
+    assert.ok(data?.shipper != null);
+    assert.equal(data?.carrier, null);
   });
 
   it("carrier viewAs returns carrier slice only", async () => {
@@ -56,6 +57,7 @@ describe("Role isolation — HTTP snapshot", { skip: integrationSuiteSkipReason(
     });
     assert.equal(res.status, 200);
     const data = res.payload ?? res.data;
-    assert.ok(data?.carrier != null || data?.bids != null);
+    assert.ok(data?.carrier != null);
+    assert.equal(data?.shipper, null);
   });
 });

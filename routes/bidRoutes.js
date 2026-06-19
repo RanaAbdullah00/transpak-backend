@@ -32,6 +32,7 @@ const { validateBidPlacement, validateCounterBid } = require("../utils/matchingE
 const { OPEN_BIDDING_ELIGIBLE_SQL, BIDDING_DEADLINE_INTERVAL_SQL } = require("../utils/loadExpiry");
 const { bidsRouteLimiter } = require("../middleware/apiRateLimit");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
+const { validateCommercialWorkspace } = require("../middleware/validateWorkspace");
 const { assertNotSelfCommercial } = require("../utils/selfExclusion");
 const { requireCarrierTruckReady } = require("../middleware/commercialGates");
 const { writeAudit } = require("../utils/auditLog");
@@ -58,9 +59,12 @@ function validate(req, res, next) {
   return next();
 }
 
-router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(), async (req, res) => {
+router.get("/", protect, requireAnyRole(["shipper", "carrier"]), validateViewAs(), validateCommercialWorkspace(), async (req, res) => {
   const roles = req.auth?.roles || [];
-  const viewAs = resolveCommercialViewRole(roles, req.commercialView);
+  const viewAs =
+    req.commercialWorkspace === "shipper" || req.commercialWorkspace === "carrier"
+      ? req.commercialWorkspace
+      : resolveCommercialViewRole(roles, req.commercialView, req.user?.activeRole);
 
   const loadId = req.query?.loadId ? String(req.query.loadId).trim() : "";
   const shipperLoadClause = loadId && isUuid(loadId) ? "AND b.load_id = $2" : "";

@@ -26,6 +26,8 @@ const {
   assertAssignedCarrierForGps
 } = require("../utils/gpsTracking");
 const { shipmentsRouteLimiter } = require("../middleware/apiRateLimit");
+const { validateCommercialWorkspace } = require("../middleware/validateWorkspace");
+const { shipmentPartySql } = require("../utils/commercialWorkspace");
 const { withIdempotencyKey } = require("../middleware/withIdempotencyKey");
 const { publishTrackingEvent } = require("../utils/trackingEventPublisher");
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
@@ -148,7 +150,13 @@ function sendActiveShipmentsFallback(res, message = "No active shipments found")
   return sendSuccess(res, 200, [], message);
 }
 
-const ACTIVE_SHIPMENT_SELECT = `
+const ACTIVE_SHIPMENT_SELECT_TAIL = `
+  ORDER BY s.updated_at DESC
+  LIMIT 50`;
+
+function buildActiveShipmentSelect(workspace) {
+  const partyFilter = shipmentPartySql(workspace);
+  return `
   SELECT l.id, l.code, l.cargo, l.origin, l.destination,
          l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
          l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
@@ -176,11 +184,13 @@ const ACTIVE_SHIPMENT_SELECT = `
       l.status = 'booked'
       OR l.assigned_carrier_id IS NOT NULL
     )
-    AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
-  ORDER BY s.updated_at DESC
-  LIMIT 50`;
+    AND ${partyFilter}
+  ${ACTIVE_SHIPMENT_SELECT_TAIL}`;
+}
 
-const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
+function buildActiveShipmentSelectNoBookingRef(workspace) {
+  const partyFilter = shipmentPartySql(workspace);
+  return `
   SELECT l.id, l.code, l.cargo, l.origin, l.destination,
          l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
          l.shipper_id AS "shipperId", l.assigned_carrier_id AS "assignedCarrierId",
@@ -204,18 +214,19 @@ const ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF = `
       l.status = 'booked'
       OR l.assigned_carrier_id IS NOT NULL
     )
-    AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
-  ORDER BY s.updated_at DESC
-  LIMIT 50`;
+    AND ${partyFilter}
+  ${ACTIVE_SHIPMENT_SELECT_TAIL}`;
+}
 
-async function queryActiveShipmentsForUser(uid) {
+async function queryActiveShipmentsForUser(uid, workspace) {
+  const sql = buildActiveShipmentSelect(workspace);
   try {
-    const result = await query(ACTIVE_SHIPMENT_SELECT, [uid]);
+    const result = await query(sql, [uid]);
     return Array.isArray(result?.rows) ? result.rows : [];
   } catch (dbErr) {
     const msg = String(dbErr?.message || "");
     if (/booking_reference|column .* does not exist/i.test(msg)) {
-      const result = await query(ACTIVE_SHIPMENT_SELECT_NO_BOOKING_REF, [uid]);
+      const result = await query(buildActiveShipmentSelectNoBookingRef(workspace), [uid]);
       return Array.isArray(result?.rows) ? result.rows : [];
     }
     throw dbErr;
@@ -226,6 +237,7 @@ router.get(
   "/active",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
+  validateCommercialWorkspace(),
   async (req, res) => {
     try {
       const uid = resolveShipmentsUserId(req);
@@ -235,7 +247,7 @@ router.get(
 
       let rows = [];
       try {
-        rows = await queryActiveShipmentsForUser(uid);
+        rows = await queryActiveShipmentsForUser(uid, req.commercialWorkspace);
       } catch (dbErr) {
         // eslint-disable-next-line no-console
         console.warn("[shipments/active] query failed", {
@@ -264,9 +276,11 @@ router.get(
   "/history",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
+  validateCommercialWorkspace(),
   async (req, res) => {
     try {
       const uid = req.auth.userId;
+      const partyFilter = shipmentPartySql(req.commercialWorkspace);
       const { rows } = await query(
         `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
                 l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
@@ -281,7 +295,7 @@ router.get(
          LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
          LEFT JOIN users us ON us.id = l.shipper_id
          WHERE s.status IN ('delivered', 'closed')
-           AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
+           AND ${partyFilter}
          ORDER BY s.updated_at DESC
          LIMIT 100`,
         [uid]
@@ -297,9 +311,11 @@ router.get(
   "/completed",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
+  validateCommercialWorkspace(),
   async (req, res) => {
     try {
       const uid = req.auth.userId;
+      const partyFilter = shipmentPartySql(req.commercialWorkspace);
       const { rows } = await query(
         `SELECT l.id, l.code, l.cargo, l.origin, l.destination,
                 l.vehicle_type AS "vehicleType", l.pickup_date AS "pickupDate",
@@ -314,7 +330,7 @@ router.get(
          LEFT JOIN users uc ON uc.id = l.assigned_carrier_id
          LEFT JOIN users us ON us.id = l.shipper_id
          WHERE s.status IN ('delivered', 'closed')
-           AND (l.shipper_id = $1 OR l.assigned_carrier_id = $1)
+           AND ${partyFilter}
          ORDER BY s.updated_at DESC
          LIMIT 100`,
         [uid]

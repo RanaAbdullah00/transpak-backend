@@ -12,6 +12,7 @@ const {
 const { appendShipmentLocationLog } = require("../utils/shipmentLocationLog");
 const { publishTrackingEvent } = require("../utils/trackingEventPublisher");
 const realtimeHub = require("../services/realtimeHub");
+const { normalizeWorkspace } = require("../utils/commercialWorkspace");
 const { allowSocketEvent, clearSocketRateLimits } = require("../utils/socketEventRateLimit");
 const {
   recordSocketConnect,
@@ -56,11 +57,40 @@ module.exports = function registerSocketHandlers(io) {
     }
   }
 
-  io.on("connection", (socket) => {
+  function canJoinWorkspace(userRoles, workspace) {
+    const ws = normalizeWorkspace(workspace);
+    if (!ws) return false;
+    const roles = (userRoles || []).map((r) => String(r).trim().toLowerCase());
+    if (ws === "admin") return roles.includes("admin");
+    return roles.includes(ws);
+  }
+
+  io.on("connection", async (socket) => {
     const uid = String(socket.userId);
     recordSocketConnect();
+
+    let userRoles = [];
+    let dbActiveRole = null;
+    try {
+      const { rows } = await db(`SELECT roles, active_role FROM users WHERE id = $1`, [uid]);
+      userRoles = Array.isArray(rows[0]?.roles) ? rows[0].roles : [];
+      dbActiveRole = rows[0]?.active_role;
+      socket.userRoles = userRoles;
+    } catch {
+      socket.userRoles = [];
+    }
+
     const handshakeWorkspace = String(socket.handshake?.auth?.workspace || "").trim().toLowerCase();
-    joinWorkspaceRooms(socket, uid, handshakeWorkspace);
+    if (canJoinWorkspace(userRoles, handshakeWorkspace)) {
+      joinWorkspaceRooms(socket, uid, handshakeWorkspace);
+    } else {
+      const fallback = normalizeWorkspace(dbActiveRole);
+      if (canJoinWorkspace(userRoles, fallback)) {
+        joinWorkspaceRooms(socket, uid, fallback);
+      } else if (userRoles.length === 1 && canJoinWorkspace(userRoles, userRoles[0])) {
+        joinWorkspaceRooms(socket, uid, userRoles[0]);
+      }
+    }
 
     socket.on("disconnect", (reason) => {
       clearSocketRateLimits(socket);
@@ -70,6 +100,7 @@ module.exports = function registerSocketHandlers(io) {
     socket.on("workspace:join", (payload) => {
       if (!allowSocketEvent(socket, "workspace:join")) return;
       const ws = String(payload?.workspace || payload?.activeRole || "").trim().toLowerCase();
+      if (!canJoinWorkspace(socket.userRoles, ws)) return;
       if (ws === "shipper" || ws === "carrier" || ws === "admin") {
         joinWorkspaceRooms(socket, uid, ws);
       }

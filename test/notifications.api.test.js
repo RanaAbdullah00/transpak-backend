@@ -82,7 +82,7 @@ const { hasDualRoleEnv, skipDualRoleReason } = require("./helpers/config");
 const { insertTestNotification, findUserIdByEmail, closePool } = require("./helpers/db");
 
 describe(
-  "Dual-role includeAllRoles notification PATCH",
+  "Dual-role workspace-scoped notification PATCH",
   { skip: hasDualRoleEnv() ? false : skipDualRoleReason() },
   () => {
     let token;
@@ -108,62 +108,63 @@ describe(
       await closePool();
     });
 
-    it("includeAllRoles unread count spans both commercial roles", async () => {
-      const scoped = await api("GET", "/api/notifications/unread-count", {
+    it("shipper workspace unread count excludes carrier notifications", async () => {
+      const shipperOnly = await api("GET", "/api/notifications/unread-count", {
         token,
         workspace: "shipper"
       });
-      const all = await api("GET", "/api/notifications/unread-count", {
+      const carrierOnly = await api("GET", "/api/notifications/unread-count", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "carrier"
       });
-      assert.ok(scoped.ok && all.ok);
-      assert.ok((all.payload?.count ?? 0) >= (scoped.payload?.count ?? 0));
-      assert.ok((all.payload?.count ?? 0) >= 2);
+      assert.ok(shipperOnly.ok && carrierOnly.ok);
+      assert.ok((shipperOnly.payload?.count ?? 0) >= 1);
+      assert.ok((carrierOnly.payload?.count ?? 0) >= 1);
     });
 
-    it("single read with includeAllRoles decrements combined unread", async () => {
+    it("single read in shipper workspace does not clear carrier unread", async () => {
       const list = await api("GET", "/api/notifications", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId), limit: "10" }
+        workspace: "shipper",
+        query: { limit: "10" }
       });
       const items = Array.isArray(list.payload) ? list.payload : list.payload?.items || [];
-      const unreadItem = items.find((n) => !n.read);
-      assert.ok(unreadItem?.id, "expected unread notification");
+      const unreadItem = items.find((n) => !n.read && n.roleType === "shipper");
+      assert.ok(unreadItem?.id, "expected unread shipper notification");
 
-      const before = await api("GET", "/api/notifications/unread-count", {
+      const carrierBefore = await api("GET", "/api/notifications/unread-count", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "carrier"
       });
 
       const patched = await api("PATCH", `/api/notifications/${unreadItem.id}/read`, {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "shipper"
       });
       assert.ok(patched.ok, patched.message);
 
-      const after = await api("GET", "/api/notifications/unread-count", {
+      const carrierAfter = await api("GET", "/api/notifications/unread-count", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "carrier"
       });
-      assert.equal(after.payload?.count, (before.payload?.count ?? 0) - 1);
+      assert.equal(carrierAfter.payload?.count, carrierBefore.payload?.count);
     });
 
-    it("read-all with includeAllRoles clears unread and sync agrees", async () => {
+    it("read-all in carrier workspace clears carrier unread only", async () => {
       await api("PATCH", "/api/notifications/read-all", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "carrier"
       });
 
-      const after = await api("GET", "/api/notifications/unread-count", {
+      const carrierAfter = await api("GET", "/api/notifications/unread-count", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "carrier"
       });
-      assert.equal(after.payload?.count, 0);
+      assert.equal(carrierAfter.payload?.count, 0);
 
       const sync = await api("GET", "/api/operations/sync/events", {
         token,
-        query: { includeAllRoles: "1", user_id: String(userId) }
+        workspace: "carrier"
       });
       assert.ok(sync.ok, sync.message);
       assert.equal(sync.payload?.unreadCount, 0);

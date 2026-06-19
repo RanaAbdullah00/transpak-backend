@@ -166,6 +166,16 @@ function integrationSuiteSkipReason() {
   return false;
 }
 
+/** HTTP tests that require the local test server started by run-all-tests.mjs */
+function requireLocalTestServerReason() {
+  const base = integrationSuiteSkipReason();
+  if (base) return base;
+  if (String(process.env.INTEGRATION_SERVER_READY || "").trim() !== "1") {
+    return "Run via npm test (local integration server with role enforcement middleware)";
+  }
+  return false;
+}
+
 module.exports = {
   getBaseUrl,
   getE2ECredentials,
@@ -177,6 +187,7 @@ module.exports = {
   hasIntegrationEnv,
   skipIntegrationReason,
   integrationSuiteSkipReason,
+  requireLocalTestServerReason,
   skipDbReason,
   skipConcurrencyReason,
   skipAdminReason,

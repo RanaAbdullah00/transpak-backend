@@ -1,17 +1,13 @@
 /**
- * Resolve active workspace for notification feed scoping (Phase 6).
- * Does not replace route authorization — inbox filter only.
+ * Resolve active workspace for notification feed scoping (validated upstream).
  */
 function resolveNotificationWorkspace(req) {
-  const header = String(req.headers["x-transpak-workspace"] || req.headers["X-TransPak-Workspace"] || "")
-    .trim()
-    .toLowerCase();
-  const query = String(req.query?.workspace || "").trim().toLowerCase();
-  const candidate = header || query;
-  if (candidate === "shipper" || candidate === "carrier" || candidate === "admin") {
-    return candidate;
+  if (req.commercialWorkspace) {
+    return req.commercialWorkspace;
   }
-  return null;
+  const { resolveCommercialWorkspace } = require("./commercialWorkspace");
+  const { workspace } = resolveCommercialWorkspace(req);
+  return workspace;
 }
 
 module.exports = { resolveNotificationWorkspace };

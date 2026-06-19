@@ -27,6 +27,10 @@ function notificationScopeClause(ctx, activeWorkspace = null, paramIndex = 2) {
     };
   }
 
+  if (commercial.length >= 2) {
+    return { sql: "FALSE", params: [] };
+  }
+
   const allowed = [...new Set(commercial)];
   if (roles.includes("admin")) allowed.push("admin");
 

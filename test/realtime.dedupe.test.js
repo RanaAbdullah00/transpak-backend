@@ -28,9 +28,9 @@ describe("notification scope — workspace isolation", () => {
     assert.deepEqual(scope.params, ["carrier"]);
   });
 
-  it("allows dual commercial roles when workspace omitted", () => {
+  it("fails closed for dual commercial when workspace omitted", () => {
     const scope = notificationScopeClause({ roles: ["shipper", "carrier"] }, null, 2);
-    assert.ok(scope.sql.includes("ANY"));
-    assert.deepEqual(scope.params[0].sort(), ["carrier", "shipper"]);
+    assert.equal(scope.sql, "FALSE");
+    assert.deepEqual(scope.params, []);
   });
 });

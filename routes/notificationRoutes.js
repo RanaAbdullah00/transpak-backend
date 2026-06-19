@@ -8,8 +8,13 @@ const { resolveNotificationWorkspace } = require("../utils/notificationWorkspace
 
 const { notificationsRouteLimiter } = require("../middleware/apiRateLimit");
 
+const { validateCommercialWorkspace } = require("../middleware/validateWorkspace");
+
 const router = express.Router();
 router.use(notificationsRouteLimiter);
+router.use(protect);
+router.use(requireAnyRole(["shipper", "carrier", "admin"]));
+router.use(validateCommercialWorkspace());
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -28,17 +33,12 @@ function validate(req, res, next) {
 }
 
 function scopedQuery(auth, req, paramIndex = 2) {
-  const roles = (auth?.roles || []).map((r) => String(r).trim().toLowerCase());
-  const dualCommercial = roles.includes("shipper") && roles.includes("carrier");
-  const includeAll =
-    String(req.query?.includeAllRoles || req.query?.include_all_roles || "") === "1";
-  const workspace =
-    dualCommercial && includeAll ? null : resolveNotificationWorkspace(req);
+  const workspace = resolveNotificationWorkspace(req);
   const scope = notificationScopeClause(auth, workspace, paramIndex);
   return { scope, scopeParams: scope.params, workspace };
 }
 
-router.get("/unread-count", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+router.get("/unread-count", async (req, res) => {
   const { scope, scopeParams } = scopedQuery(req.auth, req, 2);
   const params = [req.auth.userId, ...scopeParams];
   const { rows } = await query(
@@ -51,7 +51,7 @@ router.get("/unread-count", protect, requireAnyRole(["shipper", "carrier", "admi
 });
 
 /** Reconnect recovery — missed notifications + authoritative unread count. */
-router.get("/sync", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+router.get("/sync", async (req, res) => {
   const { scope, scopeParams } = scopedQuery(req.auth, req, 2);
   const baseParams = [req.auth.userId, ...scopeParams];
   const sinceRaw = req.query?.since ? String(req.query.since).trim() : null;
@@ -93,7 +93,7 @@ router.get("/sync", protect, requireAnyRole(["shipper", "carrier", "admin"]), as
   });
 });
 
-router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+router.get("/", async (req, res) => {
   const { scope, scopeParams } = scopedQuery(req.auth, req, 2);
   const limit = Math.min(50, Math.max(1, parseInt(req.query?.limit, 10) || 30));
   const cursor = req.query?.cursor ? String(req.query.cursor).trim() : null;
@@ -128,8 +128,6 @@ router.get("/", protect, requireAnyRole(["shipper", "carrier", "admin"]), async 
 
 router.post(
   "/",
-  protect,
-  requireAnyRole(["shipper", "carrier", "admin"]),
   [
     body("title").trim().isLength({ min: 1, max: 120 }).withMessage("title is required"),
     body("message").trim().isLength({ min: 1, max: 2000 }).withMessage("message is required"),
@@ -178,8 +176,6 @@ router.post(
 
 router.patch(
   "/:id/read",
-  protect,
-  requireAnyRole(["shipper", "carrier", "admin"]),
   [param("id").custom((v) => (isUuid(v) ? true : (() => { throw new Error("Invalid notification id"); })()))],
   validate,
   async (req, res) => {
@@ -196,7 +192,7 @@ router.patch(
   }
 );
 
-router.patch("/read-all", protect, requireAnyRole(["shipper", "carrier", "admin"]), async (req, res) => {
+router.patch("/read-all", async (req, res) => {
   const { scope, scopeParams } = scopedQuery(req.auth, req, 2);
   await query(
     `UPDATE notifications SET read = true WHERE receiver_id = $1 AND read = false AND ${scope.sql}`,

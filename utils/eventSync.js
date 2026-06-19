@@ -12,12 +12,7 @@ function parseSince(raw) {
  * Reconnect recovery — missed notifications + module freshness + admin audit tail.
  */
 function resolveEventSyncScope(auth, req, paramIndex = 2) {
-  const roles = (auth?.roles || []).map((r) => String(r).trim().toLowerCase());
-  const dualCommercial = roles.includes("shipper") && roles.includes("carrier");
-  const includeAll =
-    String(req.query?.includeAllRoles || req.query?.include_all_roles || "") === "1";
-  const workspace =
-    dualCommercial && includeAll ? null : resolveNotificationWorkspace(req);
+  const workspace = resolveNotificationWorkspace(req);
   const scope = notificationScopeClause(auth, workspace, paramIndex);
   return { scope, scopeParams: scope.params, workspace };
 }
@@ -60,12 +55,26 @@ async function buildEventSync(auth, req) {
   const refreshScopes = new Set();
 
   if (roles.includes("shipper") || roles.includes("carrier")) {
-    const partyFilter =
-      roles.includes("shipper") && roles.includes("carrier")
-        ? `(l.shipper_id = $1 OR l.assigned_carrier_id = $1)`
-        : roles.includes("shipper")
-          ? `l.shipper_id = $1`
-          : `l.assigned_carrier_id = $1`;
+    const { shipmentPartySql } = require("./commercialWorkspace");
+    const partyFilter = shipmentPartySql(workspace || (roles.includes("shipper") && !roles.includes("carrier") ? "shipper" : roles.includes("carrier") && !roles.includes("shipper") ? "carrier" : null));
+
+    const bidFilter =
+      workspace === "shipper"
+        ? `b.load_id IN (SELECT id FROM loads WHERE shipper_id = $1)`
+        : workspace === "carrier"
+          ? `b.carrier_id = $1`
+          : roles.includes("shipper") && !roles.includes("carrier")
+            ? `b.load_id IN (SELECT id FROM loads WHERE shipper_id = $1)`
+            : `b.carrier_id = $1`;
+
+    const spaceFilter =
+      workspace === "shipper"
+        ? `r.shipper_id = $1`
+        : workspace === "carrier"
+          ? `l.carrier_id = $1`
+          : roles.includes("shipper") && !roles.includes("carrier")
+            ? `r.shipper_id = $1`
+            : `l.carrier_id = $1`;
 
     const [{ rows: shipTs }, { rows: bidTs }, { rows: spaceTs }] = await Promise.all([
       query(
@@ -78,14 +87,14 @@ async function buildEventSync(auth, req) {
       query(
         `SELECT MAX(GREATEST(b.updated_at, b.created_at)) AS "updatedAt"
          FROM bids b
-         WHERE b.carrier_id = $1 OR b.load_id IN (SELECT id FROM loads WHERE shipper_id = $1)`,
+         WHERE ${bidFilter}`,
         [uid]
       ),
       query(
         `SELECT MAX(GREATEST(r.updated_at, r.created_at)) AS "updatedAt"
          FROM carrier_space_requests r
          LEFT JOIN carrier_space_listings l ON l.id = r.listing_id
-         WHERE r.shipper_id = $1 OR l.carrier_id = $1`,
+         WHERE ${spaceFilter}`,
         [uid]
       )
     ]);

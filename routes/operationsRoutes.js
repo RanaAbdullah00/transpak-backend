@@ -1,6 +1,8 @@
 const express = require("express");
 const { protect, requireAnyRole, validateViewAs } = require("../middleware/authMiddleware");
+const { validateCommercialWorkspace } = require("../middleware/validateWorkspace");
 const { resolveCommercialViewRole } = require("../utils/commercialViewRole");
+const { shipmentPartySql } = require("../utils/commercialWorkspace");
 const { sendSuccess, sendError } = require("../utils/apiResponse");
 const { query } = require("../db/pool");
 const { buildEventSync } = require("../utils/eventSync");
@@ -15,16 +17,15 @@ const {
 
 const router = express.Router();
 
-const SHIPMENT_PARTY_SQL = `(l.shipper_id = $1 OR l.assigned_carrier_id = $1)`;
-
-async function shipmentOpsCounts(uid) {
+async function shipmentOpsCounts(uid, workspace) {
+  const partySql = shipmentPartySql(workspace);
   const { rows: activeRows } = await query(
     `SELECT
        COUNT(*) FILTER (WHERE s.status IN ('booked', 'pickedup'))::int AS active,
        COUNT(*) FILTER (WHERE s.status = 'intransit')::int AS "inTransit"
      FROM shipments s
      JOIN loads l ON l.id = s.load_id
-     WHERE ${SHIPMENT_PARTY_SQL}
+     WHERE ${partySql}
        AND s.status NOT IN ('delivered', 'closed')`,
     [uid]
   );
@@ -32,7 +33,7 @@ async function shipmentOpsCounts(uid) {
     `SELECT COUNT(*)::int AS completed
      FROM shipments s
      JOIN loads l ON l.id = s.load_id
-     WHERE ${SHIPMENT_PARTY_SQL}
+     WHERE ${partySql}
        AND s.status IN ('delivered', 'closed')`,
     [uid]
   );
@@ -48,6 +49,7 @@ router.get(
   "/sync/events",
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
+  validateCommercialWorkspace(),
   async (req, res) => {
     try {
       const payload = await buildEventSync(req.auth, req);
@@ -63,17 +65,18 @@ router.get(
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
   validateViewAs(),
+  validateCommercialWorkspace(),
   async (req, res) => {
     try {
       const uid = req.auth.userId;
       const roles = req.auth?.roles || [];
-      const viewAs = resolveCommercialViewRole(roles, req.commercialView);
+      const workspace =
+        req.commercialWorkspace === "shipper" || req.commercialWorkspace === "carrier"
+          ? req.commercialWorkspace
+          : resolveCommercialViewRole(roles, req.commercialView, req.user?.activeRole);
       const out = { shipper: null, carrier: null };
 
-      const includeShipper = viewAs ? viewAs === "shipper" : roles.includes("shipper");
-      const includeCarrier = viewAs ? viewAs === "carrier" : roles.includes("carrier");
-
-      if (includeShipper) {
+      if (workspace === "shipper") {
         const [
           { rows: loads },
           { rows: bids },
@@ -97,7 +100,7 @@ router.get(
              WHERE r.shipper_id = $1 AND ${REQUEST_SENT_OPS_SQL}`,
             [uid]
           ),
-          shipmentOpsCounts(uid)
+          shipmentOpsCounts(uid, "shipper")
         ]);
         out.shipper = {
           openLoads: loads[0]?.open ?? 0,
@@ -109,9 +112,7 @@ router.get(
           activeShipments: loads[0]?.booked ?? 0,
           completedDeliveries: shipmentCounts.completedShipmentCount
         };
-      }
-
-      if (includeCarrier) {
+      } else if (workspace === "carrier") {
         const [
           { rows: bids },
           { rows: space },
@@ -136,7 +137,7 @@ router.get(
              WHERE l.carrier_id = $1 AND ${REQUEST_SENT_OPS_SQL}`,
             [uid]
           ),
-          shipmentOpsCounts(uid)
+          shipmentOpsCounts(uid, "carrier")
         ]);
         out.carrier = {
           activeBids: bids[0]?.active ?? 0,
@@ -172,12 +173,7 @@ function parseActivitySinceMs(raw) {
 }
 
 function activityScopeQuery(auth, req) {
-  const roles = (auth?.roles || []).map((r) => String(r).trim().toLowerCase());
-  const dualCommercial = roles.includes("shipper") && roles.includes("carrier");
-  const includeAll =
-    String(req.query?.includeAllRoles || req.query?.include_all_roles || "") === "1";
-  const workspace =
-    dualCommercial && includeAll ? null : resolveNotificationWorkspace(req);
+  const workspace = resolveNotificationWorkspace(req);
   return notificationScopeClause(auth, workspace, 2);
 }
 
@@ -187,6 +183,7 @@ router.get(
   protect,
   requireAnyRole(["shipper", "carrier", "admin"]),
   validateViewAs(),
+  validateCommercialWorkspace(),
   async (req, res) => {
     try {
       const uid = req.auth.userId;
